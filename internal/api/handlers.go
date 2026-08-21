@@ -153,8 +153,43 @@ func (s *Server) resolveAbsolute(p string) string {
 	return ""
 }
 
+// resolveDocAsset 解析文档内资源路径(允许 ../ 一级):
+// 目标可位于文档根内, 或根的直接父目录内(如 ../img/x.png 引用兄弟目录图片)。
+// 始终做符号链接校验, 防止逃逸出根与根父级。
+func (s *Server) resolveDocAsset(st *store.Store, rel string) (string, bool) {
+	base := filepath.Clean(st.Root())
+	parent := filepath.Dir(base)
+	candidate := filepath.Clean(filepath.Join(base, filepath.FromSlash(rel)))
+
+	// 目标必须位于根内或根的直接父级内(../ 只允许一级)
+	if candidate != base && candidate != parent &&
+		!strings.HasPrefix(candidate, base+string(os.PathSeparator)) &&
+		!strings.HasPrefix(candidate, parent+string(os.PathSeparator)) {
+		return "", false
+	}
+	// 符号链接校验: 解析结果不能逃出根或根父级
+	baseR, err := filepath.EvalSymlinks(base)
+	if err != nil {
+		baseR = base
+	}
+	parentR, err := filepath.EvalSymlinks(parent)
+	if err != nil {
+		parentR = parent
+	}
+	resolved, err := filepath.EvalSymlinks(candidate)
+	if err != nil {
+		return "", false
+	}
+	inBase := resolved == baseR || strings.HasPrefix(resolved, baseR+string(os.PathSeparator))
+	inParent := resolved == parentR || strings.HasPrefix(resolved, parentR+string(os.PathSeparator))
+	if !inBase && !inParent {
+		return "", false
+	}
+	return resolved, true
+}
+
 // handleFile 提供 Markdown 文档内的图片资源。
-// path 支持: 相对路径(多根时含根前缀) / 文档根内的本地绝对路径。
+// path 支持: 相对路径(多根时含根前缀, 允许 ../ 一级) / 文档根内的本地绝对路径。
 func (s *Server) handleFile(w http.ResponseWriter, r *http.Request) {
 	p := strings.TrimSpace(r.URL.Query().Get("path"))
 	if p == "" {
@@ -167,6 +202,12 @@ func (s *Server) handleFile(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		// 2) 本地绝对路径(必须位于某文档根内)
 		full = s.resolveAbsolute(p)
+		if full == "" {
+			// 3) ../ 相对路径: 允许访问根的直接父级内资源(如图片目录)
+			if f, ok := s.resolveDocAsset(st, rel); ok {
+				full = f
+			}
+		}
 		if full == "" {
 			writeErr(w, http.StatusNotFound, "文件不存在: "+p)
 			return

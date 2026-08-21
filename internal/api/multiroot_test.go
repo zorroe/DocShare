@@ -224,9 +224,52 @@ func TestFileNonImageRejected(t *testing.T) {
 func TestFileTraversalRejected(t *testing.T) {
 	ts, _ := imageServer(t)
 	defer ts.Close()
-	resp, _ := http.Get(ts.URL + "/api/file?path=..%2Foutside.png")
+	// 二级及以上跳转 → 拒绝(../ 一级允许访问父级内图片, 见 TestFileParentDirImage)
+	resp, _ := http.Get(ts.URL + "/api/file?path=..%2F..%2Foutside.png")
 	resp.Body.Close()
 	if resp.StatusCode != http.StatusNotFound && resp.StatusCode != http.StatusForbidden {
-		t.Fatalf("穿越路径应被拒绝, got %d", resp.StatusCode)
+		t.Fatalf("二级跳转应被拒绝, got %d", resp.StatusCode)
+	}
+	// 三级跳转
+	resp2, _ := http.Get(ts.URL + "/api/file?path=..%2F..%2F..%2Fx.png")
+	resp2.Body.Close()
+	if resp2.StatusCode != http.StatusNotFound && resp2.StatusCode != http.StatusForbidden {
+		t.Fatalf("三级跳转应被拒绝, got %d", resp2.StatusCode)
+	}
+}
+
+// ../ 一级: 允许访问根的直接父级内图片(如 ../img/x.png)
+func TestFileParentDirImage(t *testing.T) {
+	ts, docs := imageServer(t)
+	defer ts.Close()
+	parent := filepath.Dir(docs)
+	png := []byte{0x89, 'P', 'N', 'G', 0x0d, 0x0a, 0x1a, 0x0a}
+	// 父级下建 img 目录(模拟用户场景: doc 与 img 是兄弟目录)
+	imgDir := filepath.Join(parent, "img")
+	_ = os.MkdirAll(imgDir, 0o755)
+	_ = os.WriteFile(filepath.Join(imgDir, "pic.png"), png, 0o644)
+	// 父级下的非图片(应拒绝)
+	_ = os.WriteFile(filepath.Join(imgDir, "secret.txt"), []byte("x"), 0o644)
+
+	// ../img/pic.png → 200
+	resp, err := http.Get(ts.URL + "/api/file?path=..%2Fimg%2Fpic.png")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("../img 图片应 200, got %d", resp.StatusCode)
+	}
+	// ../img/secret.txt → 403
+	resp2, _ := http.Get(ts.URL + "/api/file?path=..%2Fimg%2Fsecret.txt")
+	resp2.Body.Close()
+	if resp2.StatusCode != http.StatusForbidden {
+		t.Fatalf("父级非图片应 403, got %d", resp2.StatusCode)
+	}
+	// ../../ 二级跳转 → 拒绝
+	resp3, _ := http.Get(ts.URL + "/api/file?path=..%2F..%2Fimg%2Fpic.png")
+	resp3.Body.Close()
+	if resp3.StatusCode != http.StatusNotFound && resp3.StatusCode != http.StatusForbidden {
+		t.Fatalf("二级跳转应被拒绝, got %d", resp3.StatusCode)
 	}
 }
