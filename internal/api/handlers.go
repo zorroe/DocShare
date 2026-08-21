@@ -25,18 +25,26 @@ import (
 
 // Server 聚合 HTTP 处理所需依赖。
 type Server struct {
-	st         *store.Store
-	frontDir   string   // 磁盘前端目录(可选, 调试用); 为空时使用内嵌资源
-	webFS      fs.FS    // 内嵌前端资源
-	blacklist  []string // IP 黑名单(精确 IP 或 CIDR)
-	password   string   // 只读访问密码(空 = 不启用)
-	authSecret []byte   // 会话令牌签名密钥
+	stores     []*store.Store // 文档存储(支持多根目录)
+	frontDir   string         // 磁盘前端目录(可选, 调试用); 为空时使用内嵌资源
+	webFS      fs.FS          // 内嵌前端资源
+	blacklist  []string       // IP 黑名单(精确 IP 或 CIDR)
+	password   string         // 只读访问密码(空 = 不启用)
+	authSecret []byte         // 会话令牌签名密钥
 }
 
-// New 创建 Server。
-// frontDir 非空且存在时优先使用磁盘目录, 否则使用 webFS 内嵌资源。
+// New 创建单根 Server(兼容旧签名)。
 func New(st *store.Store, frontDir string, webFS fs.FS, blacklist []string, password string) (*Server, error) {
-	s := &Server{st: st, webFS: webFS, password: password}
+	return NewMulti([]*store.Store{st}, frontDir, webFS, blacklist, password)
+}
+
+// NewMulti 创建多根 Server: 多个文档目录聚合展示,
+// 目录树中每个根作为一级节点(以目录名区分), 路径形如 "根名/相对路径"。
+func NewMulti(stores []*store.Store, frontDir string, webFS fs.FS, blacklist []string, password string) (*Server, error) {
+	if len(stores) == 0 {
+		return nil, errors.New("至少需要一个文档存储")
+	}
+	s := &Server{stores: stores, webFS: webFS, password: password}
 	if s.password != "" {
 		b := make([]byte, 16)
 		if _, err := rand.Read(b); err != nil {
@@ -73,6 +81,46 @@ func New(st *store.Store, frontDir string, webFS fs.FS, blacklist []string, pass
 		}
 	}
 	return s, nil
+}
+
+// multiRoot 是否多根模式(树中显示根节点层级)。
+func (s *Server) multiRoot() bool { return len(s.stores) > 1 }
+
+// rootName 返回 store 的逻辑根名(目录 basename)。
+func rootName(st *store.Store) string {
+	name := filepath.Base(st.Root())
+	if name == "." || name == string(filepath.Separator) {
+		return "docs"
+	}
+	return name
+}
+
+// resolveStore 将请求路径路由到对应 store:
+// 多根模式路径形如 "根名/相对路径", 首段匹配根名; 无匹配回落首个 store。
+func (s *Server) resolveStore(path string) (*store.Store, string) {
+	if len(s.stores) == 1 {
+		return s.stores[0], path
+	}
+	idx := strings.IndexByte(path, '/')
+	first := path
+	rest := ""
+	if idx >= 0 {
+		first, rest = path[:idx], path[idx+1:]
+	}
+	for _, st := range s.stores {
+		if rootName(st) == first {
+			return st, rest
+		}
+	}
+	return s.stores[0], path
+}
+
+// rootPrefix 为搜索结果/访问记录补充根前缀(多根模式)。
+func (s *Server) rootPrefix(st *store.Store, rel string) string {
+	if len(s.stores) == 1 {
+		return rel
+	}
+	return rootName(st) + "/" + rel
 }
 
 // Handler 返回完整路由。
@@ -265,15 +313,35 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleTree(w http.ResponseWriter, r *http.Request) {
-	tree, err := s.st.Tree()
-	if err != nil {
-		writeErr(w, http.StatusInternalServerError, "读取文档目录失败: "+err.Error())
+	if !s.multiRoot() {
+		st := s.stores[0]
+		tree, err := st.Tree()
+		if err != nil {
+			writeErr(w, http.StatusInternalServerError, "读取文档目录失败: "+err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{
+			"ready": st.Ready(),
+			"node":  tree,
+		})
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{
-		"ready": s.st.Ready(),
-		"node":  tree,
-	})
+	// 多根: 聚合, 每个根作为一级目录节点
+	root := &store.Node{Name: "文档", Path: ".", IsDir: true}
+	ready := false
+	for _, st := range s.stores {
+		tree, err := st.Tree()
+		if err != nil {
+			continue
+		}
+		if st.Ready() {
+			ready = true
+		}
+		tree.Name = rootName(st)
+		tree.Path = rootName(st)
+		root.Children = append(root.Children, tree)
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ready": ready, "node": root})
 }
 
 func (s *Server) handleDoc(w http.ResponseWriter, r *http.Request) {
@@ -282,7 +350,8 @@ func (s *Server) handleDoc(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "缺少 path 参数")
 		return
 	}
-	content, modified, size, err := s.st.ReadDoc(path)
+	st, rel := s.resolveStore(path)
+	content, modified, size, err := st.ReadDoc(rel)
 	if err != nil {
 		if errors.Is(err, store.ErrNotFound) {
 			writeErr(w, http.StatusNotFound, "文档不存在: "+path)
@@ -296,14 +365,14 @@ func (s *Server) handleDoc(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"path":     path,
+		"path":     s.rootPrefix(st, rel),
 		"name":     filepath.Base(path),
 		"content":  content,
 		"modified": modified,
 		"size":     size,
 	})
 	// 记录访问(异步, 不影响响应)
-	go s.st.RecordAccess(path, clientIP(r), r.UserAgent())
+	go st.RecordAccess(s.rootPrefix(st, rel), clientIP(r), r.UserAgent())
 }
 
 func clientIP(r *http.Request) string {
@@ -313,7 +382,7 @@ func clientIP(r *http.Request) string {
 	return r.RemoteAddr
 }
 
-// handleSearch 全文搜索。
+// handleSearch 全文搜索(跨所有文档根聚合)。
 func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 	q := strings.TrimSpace(r.URL.Query().Get("q"))
 	if q == "" {
@@ -324,15 +393,22 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "搜索词过长")
 		return
 	}
-	results, err := s.st.Search(q)
-	if err != nil {
-		writeErr(w, http.StatusInternalServerError, "搜索失败: "+err.Error())
-		return
+	var all []store.SearchResult
+	for _, st := range s.stores {
+		results, err := st.Search(q)
+		if err != nil {
+			writeErr(w, http.StatusInternalServerError, "搜索失败: "+err.Error())
+			return
+		}
+		for _, res := range results {
+			res.Path = s.rootPrefix(st, res.Path)
+			all = append(all, res)
+		}
 	}
-	if results == nil {
-		results = []store.SearchResult{}
+	if all == nil {
+		all = []store.SearchResult{}
 	}
-	writeJSON(w, http.StatusOK, results)
+	writeJSON(w, http.StatusOK, all)
 }
 
 // handleStatic 托管前端静态资源, 未命中的路径回退到 index.html(SPA)。

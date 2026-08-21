@@ -102,12 +102,14 @@
       </header>
       <div class="settings-body">
         <div class="form-item">
-          <label for="setDocsDir">文档目录</label>
+          <label>文档目录</label>
+          <div id="multiDirs" class="multi-dirs"></div>
           <div class="dir-row">
-            <input id="setDocsDir" type="text" placeholder="选择 Markdown 文档所在目录" autocomplete="off" spellcheck="false" />
+            <input id="setDocsDir" type="text" placeholder="Markdown 文档目录路径" autocomplete="off" spellcheck="false" />
             <button id="pickDirBtn" class="btn ghost" type="button">浏览…</button>
+            <button id="addDirBtn" class="btn primary" type="button">添加</button>
           </div>
-          <p class="form-hint">该目录下的 Markdown 文件将对外展示，支持子文件夹。</p>
+          <p class="form-hint">支持多个目录并行展示（以目录名区分，重名自动加序号）。</p>
         </div>
         <div class="form-item">
           <label for="setPort">端口</label>

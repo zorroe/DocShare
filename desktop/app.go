@@ -102,12 +102,24 @@ func (a *App) shutdown(ctx context.Context) {
 
 func (a *App) startServer() error {
 	a.stopServer()
-	st, err := store.New(a.cfg.DocsDir, a.dataDir)
-	if err != nil {
-		return err
+	dirs := a.cfg.GetDocsDirs()
+	if len(dirs) == 0 {
+		dirs = []string{""} // 未配置: 单个未就绪 store
 	}
-	a.st = st
-	srv, err := api.New(st, "", api.WebFS, a.cfg.Blacklist, a.cfg.Password)
+	var stores []*store.Store
+	for i, d := range dirs {
+		stDir := a.dataDir
+		if len(dirs) > 1 { // 多根: 访问记录按根隔离存储
+			stDir = filepath.Join(a.dataDir, "roots", strconv.Itoa(i))
+		}
+		st, err := store.New(d, stDir)
+		if err != nil {
+			return err
+		}
+		stores = append(stores, st)
+	}
+	a.st = stores[0] // 访问记录读取等沿用首个 store
+	srv, err := api.NewMulti(stores, "", api.WebFS, a.cfg.Blacklist, a.cfg.Password)
 	if err != nil {
 		return err
 	}
@@ -154,6 +166,7 @@ func (a *App) ServerInfo() map[string]any {
 	return map[string]any{
 		"port":      a.cfg.Port,
 		"docsDir":   a.cfg.DocsDir,
+		"docsDirs":  a.cfg.GetDocsDirs(),
 		"lan":       a.cfg.LAN,
 		"running":   a.started,
 		"dataDir":   a.dataDir,
@@ -205,18 +218,28 @@ func (a *App) listDrives() ([]DirEntry, error) {
 	return out, nil
 }
 
-// SaveConfig 保存配置并重启服务。
-func (a *App) SaveConfig(docsDir string, port int, lan bool, blacklist []string, password string) (map[string]any, error) {
+// SaveConfig 保存配置并重启服务(支持多文档目录)。
+func (a *App) SaveConfig(docsDirs []string, port int, lan bool, blacklist []string, password string) (map[string]any, error) {
 	if port <= 0 || port > 65535 {
 		return nil, fmt.Errorf("端口必须在 1-65535 之间")
 	}
-	if strings.TrimSpace(docsDir) != "" {
-		info, err := os.Stat(docsDir)
-		if err != nil || !info.IsDir() {
-			return nil, fmt.Errorf("文档目录不存在: %s", docsDir)
+	var dirs []string
+	for _, d := range docsDirs {
+		d = strings.TrimSpace(d)
+		if d == "" {
+			continue
 		}
+		info, err := os.Stat(d)
+		if err != nil || !info.IsDir() {
+			return nil, fmt.Errorf("文档目录不存在: %s", d)
+		}
+		dirs = append(dirs, d)
 	}
-	a.cfg.DocsDir = strings.TrimSpace(docsDir)
+	a.cfg.DocsDirs = dirs
+	a.cfg.DocsDir = ""
+	if len(dirs) > 0 {
+		a.cfg.DocsDir = dirs[0] // 兼容字段同步
+	}
 	a.cfg.Port = port
 	a.cfg.LAN = lan
 	a.cfg.Password = strings.TrimSpace(password)

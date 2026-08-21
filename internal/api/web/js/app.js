@@ -67,6 +67,7 @@ const state = {
   collapsedDirs: new Set(), // 用户手动折叠的目录(树刷新时恢复)
   authToken: store.getItem('docshare-auth') || '',
   authEnabled: false,
+  docsDirs: [],
   recent: (() => { try { return JSON.parse(store.getItem('docshare-recent') || '[]'); } catch { return []; } })(),
   scrollTimer: null,
 };
@@ -97,6 +98,8 @@ const els = {
   settingsMask: $('settingsMask'),
   setDocsDir: $('setDocsDir'),
   pickDirBtn: $('pickDirBtn'),
+  addDirBtn: $('addDirBtn'),
+  multiDirs: $('multiDirs'),
   setPort: $('setPort'),
   setLan: $('setLan'),
   setAutoStart: $('setAutoStart'),
@@ -888,10 +891,26 @@ function buildToc(docEl) {
 /* ============================================================
    设置面板(仅桌面端)
    ============================================================ */
+function renderMultiDirs() {
+  els.multiDirs.innerHTML = state.docsDirs.map((d, i) => `
+    <div class="multi-dir-item">
+      <span class="multi-dir-path" title="${esc(d)}">${esc(d)}</span>
+      <button type="button" class="multi-dir-del" data-idx="${i}" title="移除">✕</button>
+    </div>`).join('');
+  els.multiDirs.querySelectorAll('.multi-dir-del').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      state.docsDirs.splice(parseInt(btn.dataset.idx, 10), 1);
+      renderMultiDirs();
+    });
+  });
+}
+
 async function openSettings() {
   try {
     const info = await window.go.main.App.ServerInfo();
-    els.setDocsDir.value = info.docsDir || '';
+    state.docsDirs = (info.docsDirs || []).slice();
+    renderMultiDirs();
+    els.setDocsDir.value = '';
     els.setPort.value = info.port || 8080;
     els.setLan.checked = !!info.lan;
     els.setBlacklist.value = (info.blacklist || []).join('\n');
@@ -907,7 +926,6 @@ async function openSettings() {
 }
 
 async function saveSettings() {
-  const dir = els.setDocsDir.value.trim();
   const port = parseInt(els.setPort.value, 10);
   if (!port || port < 1 || port > 65535) { toast('端口无效', 'err'); return; }
   const blacklist = els.setBlacklist.value.split('\n').map((s) => s.trim()).filter(Boolean);
@@ -915,7 +933,7 @@ async function saveSettings() {
   els.saveSettingsBtn.disabled = true;
   els.settingsStatus.textContent = '应用配置中…';
   try {
-    const info = await window.go.main.App.SaveConfig(dir, port, els.setLan.checked, blacklist, password);
+    const info = await window.go.main.App.SaveConfig(state.docsDirs.slice(), port, els.setLan.checked, blacklist, password);
     els.settingsStatus.textContent = '已保存，服务已重启';
     toast('配置已保存，服务已重启');
     setTimeout(() => { if (info.running) location.reload(); }, 500);
@@ -1083,6 +1101,14 @@ async function init() {
     els.menuPop.querySelector('.menu-sep').hidden = false;
     els.saveSettingsBtn.addEventListener('click', saveSettings);
     els.pickDirBtn.addEventListener('click', openDirPicker);
+    els.addDirBtn.addEventListener('click', () => {
+      const d = els.setDocsDir.value.trim();
+      if (!d) { toast('请先输入目录路径', 'err'); return; }
+      if (state.docsDirs.includes(d)) { toast('该目录已在列表中', 'err'); return; }
+      state.docsDirs.push(d);
+      renderMultiDirs();
+      els.setDocsDir.value = '';
+    });
     els.openBrowserBtn.addEventListener('click', () => window.go.main.App.OpenBrowser());
     els.dirUpBtn.addEventListener('click', dirGoUp);
     els.dirChooseBtn.addEventListener('click', () => {

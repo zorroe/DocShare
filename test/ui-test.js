@@ -268,9 +268,9 @@ const EDGE = 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe'
   await page.evaluateOnNewDocument(() => {
     window.__DSH_TEST_DESKTOP = true; // 自动化测试标记: 允许 http 页面模拟桌面模式
     window.go = { main: { App: {
-      ServerInfo: async () => ({ port: 18080, docsDir: 'E:/code/DocShare/docs', lan: true, running: true, dataDir: 'x', error: '', blacklist: [] }),
+      ServerInfo: async () => ({ port: 18080, docsDir: 'E:/code/DocShare/docs', docsDirs: ['E:/code/DocShare/docs'], lan: true, running: true, dataDir: 'x', error: '', blacklist: [], password: '' }),
       ListDir: async (p) => (p ? [{ name: '子目录', path: p + '/sub' }] : [{ name: 'C:\\', path: 'C:\\' }]),
-      SaveConfig: async (d, p, l, bl) => ({ port: p, docsDir: d, lan: l, running: true }),
+      SaveConfig: async (dirs, p, l, bl, pw) => ({ port: p, docsDirs: dirs, docsDir: dirs[0] || '', lan: l, running: true }),
       OpenBrowser: async () => {},
       AutoStart: async () => false,
       SetAutoStart: async () => {},
@@ -291,8 +291,16 @@ const EDGE = 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe'
   check('popover 菜单弹出', popVisible, '');
   await page.click('#menuPop [data-act="settings"]');
   await page.waitForSelector('#settingsMask:not([hidden])');
-  const docsDirVal = await page.$eval('#setDocsDir', (el) => el.value);
-  check('设置面板回填配置', docsDirVal.includes('DocShare/docs'), docsDirVal);
+  const docsDirVal = await page.$eval('#multiDirs', (el) => el.textContent);
+  check('设置面板回填配置', docsDirVal.includes('DocShare/docs'), docsDirVal.slice(0, 40));
+  // 多目录: 添加 + 删除
+  await page.$eval('#setDocsDir', (el) => { el.value = 'D:/second-docs'; });
+  await page.click('#addDirBtn');
+  const twoDirs = await page.$$eval('#multiDirs .multi-dir-item', (els) => els.length);
+  check('多目录添加', twoDirs === 2, `count=${twoDirs}`);
+  await page.click('#multiDirs .multi-dir-del:last-child');
+  const oneDir = await page.$$eval('#multiDirs .multi-dir-item', (els) => els.length);
+  check('多目录删除', oneDir === 1, `count=${oneDir}`);
   // 检查更新
   await page.click('#checkUpdateBtn');
   await page.waitForFunction(() => document.querySelector('#updateStatus').textContent.includes('已是最新'), { timeout: 6000 });

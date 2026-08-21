@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -47,7 +48,7 @@ func resolvePath(p string) string {
 }
 
 func main() {
-	dir := flag.String("dir", "docs", "Markdown 文档根目录")
+	dir := flag.String("dir", "docs", "Markdown 文档根目录(多个目录用逗号分隔, 如: docs1,docs2)")
 	addr := flag.String("addr", "0.0.0.0:8080", "HTTP 监听地址(如 0.0.0.0:8080 供局域网访问)")
 	dataDir := flag.String("data", "data", "数据目录(访问记录存档)")
 	front := flag.String("front", "", "前端静态资源目录(可选, 默认使用内嵌资源)")
@@ -55,15 +56,29 @@ func main() {
 	password := flag.String("password", "", "只读访问密码(留空 = 不启用)")
 	flag.Parse()
 
-	*dir = resolvePath(*dir)
 	*dataDir = resolvePath(*dataDir)
 
-	st, err := store.New(*dir, *dataDir)
-	if err != nil {
-		log.Fatalf("初始化失败: %v", err)
+	var stores []*store.Store
+	for i, d := range strings.Split(*dir, ",") {
+		d = strings.TrimSpace(resolvePath(d))
+		if d == "" {
+			continue
+		}
+		stDir := *dataDir
+		if len(strings.Split(*dir, ",")) > 1 {
+			stDir = filepath.Join(*dataDir, "roots", strconv.Itoa(i))
+		}
+		st, err := store.New(d, stDir)
+		if err != nil {
+			log.Fatalf("初始化失败: %v", err)
+		}
+		if !st.Ready() {
+			log.Printf("[警告] 文档目录不存在, 将显示空目录树: %s", d)
+		}
+		stores = append(stores, st)
 	}
-	if !st.Ready() {
-		log.Printf("[警告] 文档目录不存在, 将显示空目录树: %s (可用 -dir 指定)", *dir)
+	if len(stores) == 0 {
+		log.Fatalf("未指定有效的文档目录")
 	}
 
 	var bl []string
@@ -73,7 +88,7 @@ func main() {
 		}
 	}
 
-	srv, err := api.New(st, *front, api.WebFS, bl, *password)
+	srv, err := api.NewMulti(stores, *front, api.WebFS, bl, *password)
 	if err != nil {
 		log.Fatalf("初始化失败: %v", err)
 	}

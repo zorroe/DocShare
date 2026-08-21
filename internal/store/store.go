@@ -55,6 +55,9 @@ func New(root, dataDir string) (*Store, error) {
 // Ready 返回文档目录是否已配置。
 func (s *Store) Ready() bool { return s.ready }
 
+// Root 返回文档根目录绝对路径。
+func (s *Store) Root() string { return s.root }
+
 // SetRoot 热切换文档根目录(桌面端配置后调用)。
 func (s *Store) SetRoot(root string) error {
 	absRoot, err := filepath.Abs(root)
