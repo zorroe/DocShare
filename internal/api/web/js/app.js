@@ -156,12 +156,105 @@ async function api(path, opts = {}) {
    ============================================================ */
 marked.setOptions({ gfm: true, breaks: true });
 
+let mermaidSeq = 0;
+const mermaidSources = new Map(); // id -> 源码(主题切换时重渲染)
+
+// 初始化 Mermaid(跟随页面主题)
+function initMermaid() {
+  if (typeof mermaid === 'undefined') return;
+  const isDark = (document.documentElement.dataset.theme || 'dark') === 'dark';
+  mermaid.initialize({
+    startOnLoad: false,
+    theme: isDark ? 'dark' : 'default',
+    securityLevel: 'strict',
+  });
+}
+
+// 渲染 Mermaid 图表(替换 ```mermaid 代码块)
+async function renderMermaid(container) {
+  if (typeof mermaid === 'undefined') return;
+  const blocks = container.querySelectorAll('pre code.language-mermaid');
+  for (const code of blocks) {
+    const pre = code.closest('pre');
+    const src = code.textContent;
+    const id = 'mmd-' + (++mermaidSeq);
+    const div = document.createElement('div');
+    div.className = 'mermaid';
+    div.dataset.mermaidId = id;
+    div.textContent = src;
+    pre.replaceWith(div);
+    try {
+      const { svg } = await mermaid.render(id, src);
+      div.innerHTML = svg;
+      mermaidSources.set(id, src);
+    } catch (e) {
+      div.innerHTML = `<div class="mermaid-error">图表渲染失败: ${esc(String(e && e.message || e))}</div>`;
+    }
+  }
+}
+
+// 主题切换后重渲染当前文档的 Mermaid 图表
+function rerenderMermaid() {
+  if (typeof mermaid === 'undefined' || !state.currentDoc) return;
+  document.querySelectorAll('#docView .mermaid[data-mermaid-id]').forEach(async (div) => {
+    const src = mermaidSources.get(div.dataset.mermaidId);
+    if (!src) return;
+    try {
+      const id = div.dataset.mermaidId;
+      const { svg } = await mermaid.render(id, src);
+      div.innerHTML = svg;
+    } catch { /* 保留旧图 */ }
+  });
+}
+
+// 复制文本(兼容非安全上下文)
+function copyText(text) {
+  if (navigator.clipboard && window.isSecureContext) {
+    return navigator.clipboard.writeText(text);
+  }
+  const ta = document.createElement('textarea');
+  ta.value = text;
+  ta.style.position = 'fixed';
+  ta.style.opacity = '0';
+  document.body.appendChild(ta);
+  ta.select();
+  try { document.execCommand('copy'); } catch { /* ignore */ }
+  ta.remove();
+  return Promise.resolve();
+}
+
+// 给代码块添加"复制"按钮
+function addCopyButtons(container) {
+  container.querySelectorAll('pre').forEach((pre) => {
+    if (pre.querySelector('.copy-btn')) return;
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'copy-btn';
+    btn.textContent = '复制';
+    btn.addEventListener('click', () => {
+      const code = pre.querySelector('code');
+      const text = code ? code.textContent : pre.textContent;
+      copyText(text).then(() => {
+        btn.textContent = '已复制';
+        btn.classList.add('copied');
+        setTimeout(() => {
+          btn.textContent = '复制';
+          btn.classList.remove('copied');
+        }, 1500);
+      });
+    });
+    pre.appendChild(btn);
+  });
+}
+
 function renderMd(md, container) {
   const html = marked.parse(md || '');
   container.innerHTML = DOMPurify.sanitize(html);
   container.querySelectorAll('pre code').forEach((el) => {
     try { hljs.highlightElement(el); } catch { /* ignore */ }
   });
+  addCopyButtons(container);
+  renderMermaid(container);
 }
 
 /* ============================================================
@@ -205,6 +298,8 @@ function bindMenu() {
         state.theme = state.theme === 'dark' ? 'light' : 'dark';
         store.setItem('docshare-theme', state.theme);
         applyTheme();
+        initMermaid();
+        rerenderMermaid();
       }
       closeMenu();
     });
@@ -737,6 +832,7 @@ function bindModals() {
    ============================================================ */
 async function init() {
   applyTheme();
+  initMermaid();
   bindModals();
   createTocFab();
 
@@ -744,6 +840,8 @@ async function init() {
     state.theme = state.theme === 'dark' ? 'light' : 'dark';
     store.setItem('docshare-theme', state.theme);
     applyTheme();
+    initMermaid();
+    rerenderMermaid();
   });
 
 

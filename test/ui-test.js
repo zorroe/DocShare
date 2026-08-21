@@ -74,6 +74,21 @@ const EDGE = 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe'
   const editBtnGone = await page.evaluate(() => !document.querySelector('#editBtn'));
   check('无申请编辑按钮', editBtnGone, '');
 
+  // ---- 2.3 Mermaid 图表渲染 ----
+  await page.waitForSelector('#docView .mermaid svg', { timeout: 10000 });
+  const mermaidOk = await page.$eval('#docView .mermaid svg', (el) => el.textContent.includes('局域网用户'));
+  check('Mermaid 图表渲染', mermaidOk, '');
+
+  // ---- 2.4 代码块复制按钮 ----
+  const copyBtnExists = await page.$eval('#docView .md-body pre .copy-btn', (el) => !!el);
+  check('代码复制按钮', copyBtnExists, '');
+  await page.hover('#docView .md-body pre');
+  await new Promise((r) => setTimeout(r, 300));
+  await page.click('#docView .md-body pre .copy-btn');
+  await new Promise((r) => setTimeout(r, 300));
+  const copyLabel = await page.$eval('#docView .md-body pre .copy-btn', (el) => el.textContent);
+  check('复制按钮反馈', copyLabel === '已复制', copyLabel);
+
   // ---- 2.5 大纲视图 ----
   await page.waitForSelector('.toc-panel', { timeout: 4000 });
   const tocText = await page.$eval('.toc-panel', (el) => el.textContent);
@@ -81,6 +96,8 @@ const EDGE = 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe'
   const tocCount = await page.$$eval('.toc-item', (els) => els.length);
   check('大纲条目数量', tocCount >= 5, `count=${tocCount}`);
   // 点击大纲跳转: 记录点击前的 scrollTop, 点击后应变化
+  await page.$eval('#docView', (el) => { el.scrollTop = 0; });
+  await new Promise((r) => setTimeout(r, 300));
   const before = await page.$eval('#docView', (el) => el.scrollTop);
   await page.click('.toc-item[data-id="功能特性"]');
   await new Promise((r) => setTimeout(r, 900));

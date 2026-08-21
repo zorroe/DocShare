@@ -733,6 +733,7 @@ mark.search-hit {
   border: 1px solid var(--border);
   overflow-x: auto;
   line-height: 1.6;
+  position: relative;
 }
 .md-body pre code {
   padding: 0;
@@ -741,6 +742,46 @@ mark.search-hit {
   font-size: 13px;
 }
 .md-body pre code.hljs { display: block; }
+
+/* 代码复制按钮 */
+.copy-btn {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  padding: 3px 10px;
+  font-size: 11px;
+  font-family: var(--font);
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text-2);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.15s, color 0.15s, border-color 0.15s;
+}
+.md-body pre:hover .copy-btn { opacity: 1; }
+.copy-btn:hover { color: var(--accent); border-color: var(--accent); }
+.copy-btn.copied { color: var(--ok); border-color: var(--ok); }
+
+/* Mermaid 图表 */
+.md-body .mermaid {
+  margin: 1em 0;
+  padding: 14px;
+  border-radius: var(--radius);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  overflow-x: auto;
+  text-align: center;
+}
+.md-body .mermaid svg { max-width: 100%; height: auto; }
+.mermaid-error {
+  padding: 14px;
+  border-radius: 8px;
+  background: var(--danger-soft);
+  color: var(--danger);
+  font-size: 12.5px;
+  text-align: left;
+}
 
 /* highlight.js 精简主题 */
 .hljs-keyword, .hljs-selector-tag, .hljs-built_in, .hljs-name { color: var(--hl-keyword); }
