@@ -15,5 +15,11 @@
     "productVersion": "1.0.0",
     "copyright": "Copyright © DocShare",
     "comments": "MD 文档中心 - 局域网文档预览与协作编辑"
-  }
+  },
+  "icon": [
+    "build/appicon/icon16.png",
+    "build/appicon/icon32.png",
+    "build/appicon/icon48.png",
+    "build/appicon/icon256.png"
+  ]
 }
