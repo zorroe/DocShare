@@ -112,6 +112,25 @@ const EDGE = 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe'
   const printed = await page.evaluate(() => window.__printed);
   check('打印为 PDF 调用', printed === 1, `printed=${printed}`);
 
+  // ---- 2.7 文档互链 ----
+  await page.$$eval('.tree-row', (rows) => {
+    rows.find((r) => r.textContent.includes('链接测试A')).click();
+  });
+  await page.waitForFunction(() => document.querySelector('#docView .md-body').textContent.includes('文档 A'), { timeout: 6000 });
+  const extLink = await page.$eval('#docView .md-body a[target="_blank"]', (el) => !!el);
+  check('外部链接新窗口', extLink, '');
+  // 点击站内链接 → 打开 B
+  await page.click('#docView .md-body a.doc-link');
+  await page.waitForFunction(() => document.querySelector('#docView .md-body').textContent.includes('文档 B'), { timeout: 6000 });
+  check('站内文档跳转', true, '');
+  // 面包屑确认切到 B
+  const crumbB = await page.$eval('#crumbs', (el) => el.textContent.includes('链接测试B'));
+  check('跳转后面包屑', crumbB, '');
+  // 从 B 点回 A
+  await page.click('#docView .md-body a.doc-link');
+  await page.waitForFunction(() => document.querySelector('#docView .md-body').textContent.includes('文档 A'), { timeout: 6000 });
+  check('返回跳转', true, '');
+
   // ---- 2.6 文档内图片渲染 ----
   await page.$$eval('.tree-row', (rows) => {
     rows.find((r) => r.textContent.includes('图片示例')).click();

@@ -247,6 +247,29 @@ marked.use({
       const titleAttr = title ? ` title="${esc(title)}"` : '';
       return `<img src="${h}" alt="${esc(text)}"${titleAttr} class="doc-img">`;
     },
+    link(href, title, text) {
+      let h = href || '';
+      // 外部链接: 新窗口打开
+      if (/^(https?:|mailto:)/i.test(h)) {
+        return `<a href="${esc(h)}" target="_blank" rel="noopener">${text}</a>`;
+      }
+      // 页面内锚点
+      if (h.startsWith('#')) {
+        return `<a href="${esc(h)}">${text}</a>`;
+      }
+      // 本地 Markdown 文档链接 → 站内导航(点击打开文档)
+      if (/\.(md|markdown)$/i.test(h)) {
+        let target = h;
+        if (!/^[A-Za-z]:[\\/]/.test(target) && !target.startsWith('/')) {
+          const dir = currentBasePath && currentBasePath.includes('/') ? currentBasePath.slice(0, currentBasePath.lastIndexOf('/')) : '';
+          target = dir ? dir + '/' + target : target;
+        }
+        const titleAttr = title ? ` title="${esc(title)}"` : '';
+        return `<a href="#" class="doc-link" data-doc-path="${esc(target)}"${titleAttr}>${text}</a>`;
+      }
+      // 其他本地资源链接: 原样保留
+      return `<a href="${esc(h)}"${title ? ` title="${esc(title)}"` : ''}>${text}</a>`;
+    },
   },
 });
 
@@ -344,7 +367,8 @@ function addCopyButtons(container) {
 function renderMd(md, container, basePath) {
   currentBasePath = basePath || '';
   const html = marked.parse(md || '');
-  container.innerHTML = DOMPurify.sanitize(html);
+  // ADD_ATTR: 允许 a[target](外部链接新窗口), 其余默认净化策略不变
+  container.innerHTML = DOMPurify.sanitize(html, { ADD_ATTR: ['target'] });
   container.querySelectorAll('pre code').forEach((el) => {
     try { hljs.highlightElement(el); } catch { /* ignore */ }
   });
@@ -499,6 +523,16 @@ const EXPORT_CSS = `
 async function buildExportBody(doc) {
   const wrap = document.createElement('div');
   renderMd(doc.content, wrap, doc.path);
+  // 站内文档链接还原为相对链接(导出后同目录文件可互跳)
+  wrap.querySelectorAll('a.doc-link').forEach((a) => {
+    const p = a.dataset.docPath || '';
+    const dir = doc.path.includes('/') ? doc.path.slice(0, doc.path.lastIndexOf('/')) : '';
+    let rel = p;
+    if (dir && p.startsWith(dir + '/')) rel = p.slice(dir.length + 1);
+    a.href = rel.replace(/\.(md|markdown)$/i, '.html'); // 指向导出的 HTML
+    a.removeAttribute('data-doc-path');
+    a.classList.remove('doc-link');
+  });
   const imgs = [...wrap.querySelectorAll('img.doc-img')];
   for (const img of imgs) {
     try {
@@ -737,6 +771,29 @@ async function pollTree() {
     state.ready = !!data.ready;
     renderTree();
   } catch { /* 服务不可用时静默 */ }
+}
+
+// 文档正文内链接交互: 站内文档跳转 + 锚点平滑滚动(事件委托, 绑定一次)
+function bindDocNav() {
+  els.docView.addEventListener('click', (e) => {
+    const link = e.target.closest('a');
+    if (!link) return;
+    // 站内 md 文档链接
+    if (link.classList.contains('doc-link')) {
+      e.preventDefault();
+      const p = link.dataset.docPath;
+      if (p) openDoc(p, null);
+      return;
+    }
+    // 锚点链接: 按标题文本匹配平滑滚动
+    if (link.getAttribute('href') && link.getAttribute('href').startsWith('#')) {
+      e.preventDefault();
+      const text = decodeURIComponent(link.getAttribute('href').slice(1));
+      const heads = [...document.querySelectorAll('#docView .md-body h1, #docView .md-body h2, #docView .md-body h3, #docView .md-body h4, #docView .md-body h5, #docView .md-body h6')];
+      const target = heads.find((h) => h.textContent.trim() === text) || document.getElementById(text);
+      if (target) target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+  });
 }
 
 /* ============================================================
@@ -1158,6 +1215,7 @@ async function init() {
   bindModals();
   createTocFab();
   bindExport();
+  bindDocNav();
 
   els.themeBtn.addEventListener('click', () => {
     state.theme = state.theme === 'dark' ? 'light' : 'dark';
