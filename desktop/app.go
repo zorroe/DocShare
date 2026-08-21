@@ -10,10 +10,12 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/wailsapp/wails/v2/pkg/runtime"
@@ -294,16 +296,17 @@ func (a *App) ListAccessLogs() []store.AccessRecord {
 	return a.st.ListAccess(200)
 }
 
-// ---- 自动更新检查 ----
+// ---- 自动更新 ----
 
 const appVersion = "1.0.0"
 
 // UpdateInfo 更新检查结果。
 type UpdateInfo struct {
-	Current   string `json:"current"`
-	Latest    string `json:"latest"`
-	URL       string `json:"url"`
-	HasUpdate bool   `json:"hasUpdate"`
+	Current     string `json:"current"`
+	Latest      string `json:"latest"`
+	URL         string `json:"url"`
+	DownloadURL string `json:"downloadUrl"` // 安装包直链
+	HasUpdate   bool   `json:"hasUpdate"`
 }
 
 // CheckUpdate 查询 GitHub Release 最新版本。
@@ -320,6 +323,10 @@ func (a *App) CheckUpdate() (*UpdateInfo, error) {
 	var rel struct {
 		TagName string `json:"tag_name"`
 		HtmlURL string `json:"html_url"`
+		Assets  []struct {
+			Name               string `json:"name"`
+			BrowserDownloadURL string `json:"browser_download_url"`
+		} `json:"assets"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&rel); err != nil {
 		return nil, err
@@ -329,8 +336,84 @@ func (a *App) CheckUpdate() (*UpdateInfo, error) {
 		Latest:  strings.TrimPrefix(rel.TagName, "v"),
 		URL:     rel.HtmlURL,
 	}
+	// 优先安装版(Setup.exe)直链, 其次便携版
+	for _, a := range rel.Assets {
+		if strings.Contains(a.Name, "Setup") {
+			info.DownloadURL = a.BrowserDownloadURL
+			break
+		}
+	}
+	if info.DownloadURL == "" {
+		for _, a := range rel.Assets {
+			if strings.HasSuffix(strings.ToLower(a.Name), ".exe") {
+				info.DownloadURL = a.BrowserDownloadURL
+				break
+			}
+		}
+	}
 	info.HasUpdate = compareVersions(info.Latest, appVersion) > 0
 	return info, nil
+}
+
+// downloadFile 下载文件到目标路径(HTTP 流式写入)。
+func downloadFile(url, dest string) error {
+	client := &http.Client{Timeout: 10 * time.Minute}
+	resp, err := client.Get(url)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("下载失败: HTTP %d", resp.StatusCode)
+	}
+	f, err := os.Create(dest)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	if _, err := io.Copy(f, resp.Body); err != nil {
+		return err
+	}
+	return nil
+}
+
+// DownloadUpdate 下载新版安装包到临时目录, 返回本地路径。
+func (a *App) DownloadUpdate() (string, error) {
+	info, err := a.CheckUpdate()
+	if err != nil {
+		return "", err
+	}
+	if info.DownloadURL == "" {
+		return "", fmt.Errorf("未找到安装包下载地址")
+	}
+	dest := filepath.Join(os.TempDir(), fmt.Sprintf("DocShare-Setup-%s.exe", info.Latest))
+	if err := downloadFile(info.DownloadURL, dest); err != nil {
+		return "", fmt.Errorf("下载安装包失败: %v", err)
+	}
+	return dest, nil
+}
+
+// ApplyUpdate 延迟启动安装程序(等待本应用退出)并退出当前应用。
+func (a *App) ApplyUpdate(installerPath string) error {
+	if installerPath == "" {
+		return fmt.Errorf("安装包路径为空")
+	}
+	if _, err := os.Stat(installerPath); err != nil {
+		return fmt.Errorf("安装包不存在: %s", installerPath)
+	}
+	// 3 秒后运行安装程序(等本应用完全退出释放文件占用)
+	cmd := exec.Command("cmd", "/c",
+		fmt.Sprintf(`timeout /t 3 /nobreak >nul & start "" "%s"`, installerPath))
+	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
+	if err := cmd.Start(); err != nil {
+		return fmt.Errorf("启动安装程序失败: %v", err)
+	}
+	// 触发正常退出流程(OnBeforeClose 放行)
+	quitting.Store(true)
+	if trayInst != nil {
+		trayInst.Quit()
+	}
+	return nil
 }
 
 // compareVersions 按点分段比较版本号: a>b 返回 1, 相等 0, 小于 -1。

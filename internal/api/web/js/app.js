@@ -995,7 +995,7 @@ async function loadAccess() {
   }
 }
 
-/* ---- 软件更新检查 ---- */
+/* ---- 软件更新检查与一键更新 ---- */
 async function checkUpdate() {
   els.checkUpdateBtn.disabled = true;
   els.updateStatus.innerHTML = '正在检查…';
@@ -1004,8 +1004,10 @@ async function checkUpdate() {
     if (info.hasUpdate) {
       els.updateStatus.innerHTML =
         `发现新版本 <code>${esc(info.latest)}</code>（当前 ${esc(info.current)}）` +
-        ` <a href="${esc(info.url)}" target="_blank" style="color:var(--accent)">前往下载</a>`;
-      toast('发现新版本 ' + info.latest);
+        ` <button id="dlUpdateBtn" class="btn primary sm" type="button">下载更新</button>` +
+        ` <a href="${esc(info.url)}" target="_blank" style="color:var(--accent)">查看更新内容</a>`;
+      const dl = document.getElementById('dlUpdateBtn');
+      if (dl) dl.addEventListener('click', downloadUpdate);
     } else {
       els.updateStatus.innerHTML = `当前版本 <code>${esc(info.current)}</code> · 已是最新`;
     }
@@ -1013,6 +1015,19 @@ async function checkUpdate() {
     els.updateStatus.innerHTML = '检查失败：' + esc(err.message || '网络不可用');
   } finally {
     els.checkUpdateBtn.disabled = false;
+  }
+}
+
+async function downloadUpdate() {
+  els.updateStatus.innerHTML = '正在下载新版安装包…（完成后会自动提示）';
+  try {
+    const installerPath = await window.go.main.App.DownloadUpdate();
+    els.updateStatus.innerHTML = `下载完成：<code>${esc(installerPath)}</code>`;
+    if (confirm('新版安装包已下载。\n点击「确定」将退出 DocShare 并自动启动安装程序，是否继续？')) {
+      await window.go.main.App.ApplyUpdate(installerPath);
+    }
+  } catch (err) {
+    els.updateStatus.innerHTML = '下载失败：' + esc(err.message || '未知错误');
   }
 }
 

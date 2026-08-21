@@ -274,7 +274,9 @@ const EDGE = 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe'
       OpenBrowser: async () => {},
       AutoStart: async () => false,
       SetAutoStart: async () => {},
-      CheckUpdate: async () => ({ current: '1.0.0', latest: '1.0.0', url: 'https://github.com/zorroe/DocShare/releases', hasUpdate: false }),
+      CheckUpdate: async () => ({ current: '1.0.0', latest: '1.1.0', url: 'https://github.com/zorroe/DocShare/releases', downloadUrl: 'https://example.com/Setup.exe', hasUpdate: true }),
+      DownloadUpdate: async () => 'C:/Users/test/AppData/Local/Temp/DocShare-Setup-1.1.0.exe',
+      ApplyUpdate: async () => {},
       ListAccessLogs: async () => [{ time: '2026-08-19T10:00:00+08:00', doc: 'README.md', ip: '192.168.1.5', ua: 'Mozilla/5.0 Chrome' }],
     } } };
   });
@@ -313,10 +315,15 @@ const EDGE = 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe'
   await page.click('#multiDirs .multi-dir-del:last-child');
   const oneDir = await page.$$eval('#multiDirs .multi-dir-item', (els) => els.length);
   check('多目录删除', oneDir === 1, `count=${oneDir}`);
-  // 检查更新
+  // 检查更新(发现新版本 → 下载更新按钮)
   await page.click('#checkUpdateBtn');
-  await page.waitForFunction(() => document.querySelector('#updateStatus').textContent.includes('已是最新'), { timeout: 6000 });
-  check('检查更新(已是最新)', true, '');
+  await page.waitForFunction(() => document.querySelector('#updateStatus').textContent.includes('发现新版本'), { timeout: 6000 });
+  check('检查更新(发现新版本)', true, '');
+  // 一键下载更新(全局 dialog 自动 accept → 触发 ApplyUpdate mock)
+  await page.click('#dlUpdateBtn');
+  await page.waitForFunction(() => document.querySelector('#updateStatus').textContent.includes('下载完成'), { timeout: 6000 });
+  const dlPath = await page.$eval('#updateStatus', (el) => el.textContent);
+  check('一键下载更新', dlPath.includes('DocShare-Setup-1.1.0.exe'), dlPath.slice(0, 40));
   await page.click('#pickDirBtn');
   await page.waitForSelector('#dirMask:not([hidden])');
   await page.waitForSelector('.dir-item', { timeout: 4000 });
