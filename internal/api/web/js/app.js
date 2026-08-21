@@ -555,7 +555,10 @@ function renderRecent() {
     return;
   }
   box.hidden = false;
-  box.innerHTML = '<div class="recent-head">最近浏览</div>' +
+  box.innerHTML = `<div class="recent-head">
+      <span>最近浏览</span>
+      <button type="button" class="recent-clear" title="清除最近浏览">清除</button>
+    </div>` +
     state.recent.slice(0, 5).map((r) => `
       <button type="button" class="recent-item" data-path="${esc(r.path)}">
         ${ICONS.clock}<span class="recent-name">${esc(r.name)}</span>
@@ -564,6 +567,17 @@ function renderRecent() {
   box.querySelectorAll('.recent-item').forEach((btn) => {
     btn.addEventListener('click', () => openDoc(btn.dataset.path, null));
   });
+  box.querySelector('.recent-clear').addEventListener('click', clearRecent);
+}
+
+// 清除最近浏览(连同各文档的阅读位置记忆)
+function clearRecent() {
+  if (!state.recent.length) return;
+  state.recent.forEach((r) => store.removeItem('docshare-scroll-' + r.path));
+  state.recent = [];
+  store.setItem('docshare-recent', '[]');
+  renderRecent();
+  toast('已清除最近浏览');
 }
 
 function restoreScroll() {

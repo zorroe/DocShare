@@ -223,6 +223,13 @@ const EDGE = 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe'
   await new Promise((r) => setTimeout(r, 800));
   const restored = await page.$eval('#docView', (el) => el.scrollTop);
   check('阅读位置恢复', restored > 200, `scroll=${restored}`);
+  // 清除最近浏览
+  await page.click('#recentBox .recent-clear');
+  await new Promise((r) => setTimeout(r, 300));
+  const recentCleared = await page.$eval('#recentBox', (el) => el.hidden);
+  check('清除最近浏览', recentCleared, '');
+  const storageCleared = await page.evaluate(() => !localStorage.getItem('docshare-recent') || JSON.parse(localStorage.getItem('docshare-recent')).length === 0);
+  check('清除后存储为空', storageCleared, '');
 
   // ---- 4. 编辑/审批功能已彻底移除 ----
   const editGone = await page.evaluate(() =>
