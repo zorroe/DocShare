@@ -228,6 +228,28 @@ async function doLogin() {
    ============================================================ */
 marked.setOptions({ gfm: true, breaks: true });
 
+// 当前渲染的文档基准路径(供 image renderer 拼接相对图片)
+let currentBasePath = '';
+
+// 自定义图片渲染: 本地图片(相对/绝对路径)在净化前转换为 /api/file 安全形式,
+// 避免 DOMPurify 将 E:\ 等本地路径判定为危险协议而清空 src。
+marked.use({
+  renderer: {
+    image(href, title, text) {
+      let h = href || '';
+      if (!/^(https?:|data:)/i.test(h)) {
+        if (!/^[A-Za-z]:[\\/]/.test(h) && !h.startsWith('/')) {
+          const dir = currentBasePath && currentBasePath.includes('/') ? currentBasePath.slice(0, currentBasePath.lastIndexOf('/')) : '';
+          h = dir ? dir + '/' + h : h;
+        }
+        h = state.apiBase + '/api/file?path=' + encodeURIComponent(h);
+      }
+      const titleAttr = title ? ` title="${esc(title)}"` : '';
+      return `<img src="${h}" alt="${esc(text)}"${titleAttr} class="doc-img">`;
+    },
+  },
+});
+
 let mermaidSeq = 0;
 const mermaidSources = new Map(); // id -> 源码(主题切换时重渲染)
 
@@ -319,7 +341,8 @@ function addCopyButtons(container) {
   });
 }
 
-function renderMd(md, container) {
+function renderMd(md, container, basePath) {
+  currentBasePath = basePath || '';
   const html = marked.parse(md || '');
   container.innerHTML = DOMPurify.sanitize(html);
   container.querySelectorAll('pre code').forEach((el) => {
@@ -472,10 +495,25 @@ const EXPORT_CSS = `
   .mermaid svg{max-width:100%;height:auto}
 `;
 
-// 干净渲染一份正文(去除搜索高亮等交互元素)
-function buildExportBody(doc) {
+// 干净渲染一份正文(去除搜索高亮等交互元素), 图片转 base64 内联(导出自包含)
+async function buildExportBody(doc) {
   const wrap = document.createElement('div');
-  renderMd(doc.content, wrap);
+  renderMd(doc.content, wrap, doc.path);
+  const imgs = [...wrap.querySelectorAll('img.doc-img')];
+  for (const img of imgs) {
+    try {
+      const res = await fetch(img.getAttribute('src'));
+      const blob = await res.blob();
+      const dataUrl = await new Promise((resolve) => {
+        const fr = new FileReader();
+        fr.onload = () => resolve(fr.result);
+        fr.readAsDataURL(blob);
+      });
+      img.src = dataUrl;
+    } catch {
+      img.remove(); // 图片不可达时移除, 避免导出文件出现裂图
+    }
+  }
   return wrap.innerHTML;
 }
 
@@ -483,7 +521,8 @@ function exportHTML() {
   const doc = state.currentDoc;
   if (!doc) return;
   const title = doc.name.replace(/\.(md|markdown)$/i, '');
-  const html = `<!DOCTYPE html>
+  buildExportBody(doc).then((bodyHtml) => {
+    const html = `<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8">
@@ -494,20 +533,21 @@ function exportHTML() {
 <body>
 <h1>${esc(title)}</h1>
 <div class="doc-meta" style="color:#8a93a3;font-size:.85em;margin-bottom:24px">来源: DocShare · ${esc(fmtTime(doc.modified))}</div>
-${buildExportBody(doc)}
+${bodyHtml}
 </body>
 </html>`;
-  const blob = new Blob([html], { type: 'text/html;charset=utf-8' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = title + '.html';
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  setTimeout(() => URL.revokeObjectURL(url), 2000);
-  window.__DSH_LAST_EXPORT = html; // 测试钩子
-  toast('已导出 ' + title + '.html');
+    const blob = new Blob([html], { type: 'text/html;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = title + '.html';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 2000);
+    window.__DSH_LAST_EXPORT = html; // 测试钩子
+    toast('已导出 ' + title + '.html');
+  });
 }
 
 function exportPDF() {
@@ -739,7 +779,7 @@ function renderDoc(doc) {
     <div class="md-body"></div>`;
   els.docView.innerHTML = '';
   els.docView.appendChild(h);
-  renderMd(doc.content, h.querySelector('.md-body'));
+  renderMd(doc.content, h.querySelector('.md-body'), doc.path);
   buildToc(h);
 
   // 全文搜索关键词高亮

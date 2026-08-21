@@ -112,7 +112,29 @@ const EDGE = 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe'
   const printed = await page.evaluate(() => window.__printed);
   check('打印为 PDF 调用', printed === 1, `printed=${printed}`);
 
+  // ---- 2.6 文档内图片渲染 ----
+  await page.$$eval('.tree-row', (rows) => {
+    rows.find((r) => r.textContent.includes('图片示例')).click();
+  });
+  await page.waitForFunction(() => document.querySelector('#docView .md-body img.doc-img'), { timeout: 6000 });
+  await page.waitForFunction(() => {
+    const imgs = [...document.querySelectorAll('#docView .md-body img.doc-img')];
+    return imgs.length >= 2 && imgs.every((i) => i.complete && i.naturalWidth > 0);
+  }, { timeout: 6000 });
+  const imgSrcOk = await page.$$eval('#docView .md-body img.doc-img', (els) => els.every((i) => i.src.includes('/api/file?path=')));
+  check('文档图片渲染', imgSrcOk, '');
+  // 导出含图片文档 → 图片内联 base64
+  await page.click('#exportBtn');
+  await new Promise((r) => setTimeout(r, 300));
+  await page.click('#exportMenu [data-act="html"]');
+  await page.waitForFunction(() => window.__DSH_LAST_EXPORT && window.__DSH_LAST_EXPORT.includes('data:image/'), { timeout: 10000 });
+  check('导出图片内联 base64', true, '');
+
   // ---- 2.5 大纲视图 ----
+  await page.$$eval('.tree-row', (rows) => {
+    rows.find((r) => r.textContent.includes('README.md')).click();
+  });
+  await page.waitForFunction(() => document.querySelector('#docView .md-body').textContent.includes('DocShare'), { timeout: 6000 });
   await page.waitForSelector('.toc-panel', { timeout: 4000 });
   const tocText = await page.$eval('.toc-panel', (el) => el.textContent);
   check('大纲面板渲染', tocText.includes('快速开始') && tocText.includes('功能特性'), tocText.slice(0, 40));

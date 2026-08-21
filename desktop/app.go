@@ -299,7 +299,7 @@ func (a *App) ListAccessLogs() []store.AccessRecord {
 
 // ---- 自动更新 ----
 
-const appVersion = "1.1.3"
+const appVersion = "1.1.4"
 
 // UpdateInfo 更新检查结果。
 type UpdateInfo struct {

@@ -135,3 +135,98 @@ func TestMultiRootSearch(t *testing.T) {
 		t.Fatalf("跨根搜索应带前缀: %+v", results)
 	}
 }
+
+// 文档内图片资源接口测试。
+func imageServer(t *testing.T) (*httptest.Server, string) {
+	t.Helper()
+	base := t.TempDir()
+	docs := filepath.Join(base, "docs")
+	_ = os.MkdirAll(filepath.Join(docs, "sub"), 0o755)
+	_ = os.WriteFile(filepath.Join(docs, "a.md"), []byte("# A"), 0o644)
+	png := []byte{0x89, 'P', 'N', 'G', 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0}
+	_ = os.WriteFile(filepath.Join(docs, "pic.png"), png, 0o644)
+	_ = os.WriteFile(filepath.Join(docs, "sub", "pic2.png"), png, 0o644)
+	_ = os.WriteFile(filepath.Join(docs, "secret.txt"), []byte("secret"), 0o644)
+	// 根外文件
+	_ = os.WriteFile(filepath.Join(base, "outside.png"), png, 0o644)
+	st, err := store.New(docs, filepath.Join(base, "data"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv, err := New(st, "", nil, nil, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return httptest.NewServer(srv.Handler()), docs
+}
+
+func TestFileImage(t *testing.T) {
+	ts, _ := imageServer(t)
+	defer ts.Close()
+	// 相对路径(单根)
+	resp, err := http.Get(ts.URL + "/api/file?path=pic.png")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("相对路径图片应 200, got %d", resp.StatusCode)
+	}
+	if ct := resp.Header.Get("Content-Type"); ct != "image/png" {
+		t.Fatalf("Content-Type 应为 image/png, got %s", ct)
+	}
+	// 子目录图片
+	resp2, _ := http.Get(ts.URL + "/api/file?path=sub/pic2.png")
+	resp2.Body.Close()
+	if resp2.StatusCode != http.StatusOK {
+		t.Fatalf("子目录图片应 200, got %d", resp2.StatusCode)
+	}
+}
+
+func TestFileAbsoluteInRoot(t *testing.T) {
+	ts, docs := imageServer(t)
+	defer ts.Close()
+	// 文档根内的本地绝对路径(Windows Markdown 常见写法)
+	abs := filepath.Join(docs, "pic.png")
+	resp, err := http.Get(ts.URL + "/api/file?path=" + abs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("根内绝对路径图片应 200, got %d", resp.StatusCode)
+	}
+	// 根外绝对路径应拒绝
+	outside := filepath.Join(filepath.Dir(docs), "outside.png")
+	resp2, _ := http.Get(ts.URL + "/api/file?path=" + outside)
+	resp2.Body.Close()
+	if resp2.StatusCode != http.StatusNotFound {
+		t.Fatalf("根外绝对路径应 404, got %d", resp2.StatusCode)
+	}
+	// 不存在文件
+	resp3, _ := http.Get(ts.URL + "/api/file?path=nope.png")
+	resp3.Body.Close()
+	if resp3.StatusCode != http.StatusNotFound {
+		t.Fatalf("不存在文件应 404, got %d", resp3.StatusCode)
+	}
+}
+
+func TestFileNonImageRejected(t *testing.T) {
+	ts, _ := imageServer(t)
+	defer ts.Close()
+	resp, _ := http.Get(ts.URL + "/api/file?path=secret.txt")
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("非图片文件应 403, got %d", resp.StatusCode)
+	}
+}
+
+func TestFileTraversalRejected(t *testing.T) {
+	ts, _ := imageServer(t)
+	defer ts.Close()
+	resp, _ := http.Get(ts.URL + "/api/file?path=..%2Foutside.png")
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusNotFound && resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("穿越路径应被拒绝, got %d", resp.StatusCode)
+	}
+}

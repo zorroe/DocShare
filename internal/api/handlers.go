@@ -123,12 +123,69 @@ func (s *Server) rootPrefix(st *store.Store, rel string) string {
 	return rootName(st) + "/" + rel
 }
 
+// ---- 文档内图片等静态资源 ----
+
+var imageExts = map[string]bool{
+	".png": true, ".jpg": true, ".jpeg": true, ".gif": true,
+	".webp": true, ".svg": true, ".bmp": true, ".ico": true, ".avif": true,
+}
+
+// resolveAbsolute 将绝对路径限定在文档根目录内(含符号链接校验), 否则返回空。
+func (s *Server) resolveAbsolute(p string) string {
+	abs := filepath.Clean(filepath.FromSlash(p))
+	if !filepath.IsAbs(abs) {
+		return ""
+	}
+	for _, st := range s.stores {
+		rootR, err := filepath.EvalSymlinks(st.Root())
+		if err != nil {
+			rootR = st.Root()
+		}
+		resolved, err := filepath.EvalSymlinks(abs)
+		if err != nil {
+			continue
+		}
+		if resolved != rootR && !strings.HasPrefix(resolved, rootR+string(os.PathSeparator)) {
+			continue
+		}
+		return resolved
+	}
+	return ""
+}
+
+// handleFile 提供 Markdown 文档内的图片资源。
+// path 支持: 相对路径(多根时含根前缀) / 文档根内的本地绝对路径。
+func (s *Server) handleFile(w http.ResponseWriter, r *http.Request) {
+	p := strings.TrimSpace(r.URL.Query().Get("path"))
+	if p == "" {
+		writeErr(w, http.StatusBadRequest, "缺少 path 参数")
+		return
+	}
+	// 1) 相对路径(含根前缀) → 常规安全解析
+	st, rel := s.resolveStore(p)
+	full, err := st.Resolve(rel)
+	if err != nil {
+		// 2) 本地绝对路径(必须位于某文档根内)
+		full = s.resolveAbsolute(p)
+		if full == "" {
+			writeErr(w, http.StatusNotFound, "文件不存在: "+p)
+			return
+		}
+	}
+	if !imageExts[strings.ToLower(filepath.Ext(full))] {
+		writeErr(w, http.StatusForbidden, "仅支持图片资源")
+		return
+	}
+	http.ServeFile(w, r, full)
+}
+
 // Handler 返回完整路由。
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/health", s.handleHealth)
 	mux.HandleFunc("GET /api/tree", s.handleTree)
 	mux.HandleFunc("GET /api/doc", s.handleDoc)
+	mux.HandleFunc("GET /api/file", s.handleFile)
 	mux.HandleFunc("GET /api/search", s.handleSearch)
 	mux.HandleFunc("GET /api/auth/status", s.handleAuthStatus)
 	mux.HandleFunc("POST /api/auth/login", s.handleAuthLogin)
