@@ -50,6 +50,13 @@ if (-not $makensis) {
         exit 0
     }
 }
+# 使用自定义 NSIS 脚本(更新覆盖原目录 + 安装完成启动勾选)
+$nsisSrc = "$root\build\windows\installer\project.nsi"
+if (Test-Path $nsisSrc) {
+    New-Item -ItemType Directory -Force -Path "$root\desktop\build\windows\installer" | Out-Null
+    Copy-Item $nsisSrc "$root\desktop\build\windows\installer\project.nsi" -Force
+    Write-Host "    使用自定义安装脚本 (project.nsi)" -ForegroundColor Cyan
+}
 wails build -s -skipbindings -nsis -installscope user -o DocShare.exe
 if ($LASTEXITCODE -ne 0) { Write-Host "[错误] 安装版构建失败" -ForegroundColor Red; exit 1 }
 $setup = Get-ChildItem "$root\desktop\build\bin\*-installer.exe" | Select-Object -First 1
