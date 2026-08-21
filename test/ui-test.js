@@ -243,6 +243,40 @@ const EDGE = 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe'
     { timeout: 12000 });
   check('目录树自动刷新(删除文件)', true, '');
 
+  // ---- 3.6.5 当前文档自动刷新(磁盘内容被修改/删除时) ----
+  const autoDoc = path.join(__dirname, '..', 'docs', '_auto_reload_test.md');
+  fs.writeFileSync(autoDoc, '# 自动刷新测试\n\n版本一\n');
+  await page.waitForFunction(() =>
+    document.querySelector('#tree').textContent.includes('_auto_reload_test'),
+    { timeout: 12000 });
+  await page.$$eval('.tree-row', (rows) => {
+    rows.find((r) => r.textContent.includes('_auto_reload_test')).click();
+  });
+  await page.waitForFunction(() =>
+    document.querySelector('#docView .md-body').textContent.includes('版本一'),
+    { timeout: 6000 });
+  // 外部修改文件 → 轮询检测到 mtime/size 变化后自动重新渲染
+  fs.writeFileSync(autoDoc, '# 自动刷新测试\n\n版本二\n');
+  await page.waitForFunction(() =>
+    document.querySelector('#docView .md-body').textContent.includes('版本二'),
+    { timeout: 15000 });
+  check('文档自动刷新(内容变更)', true, '');
+  const refreshTip = await page.$eval('#toast', (el) => el.textContent);
+  check('自动刷新提示', refreshTip.includes('已自动刷新'), refreshTip);
+  // 删除当前文档 → 提示已被删除(内容保留)
+  fs.unlinkSync(autoDoc);
+  await page.waitForFunction(() =>
+    document.querySelector('#toast').textContent.includes('已被删除'),
+    { timeout: 15000 });
+  check('文档删除提示', true, '');
+  // 回到 README 继续后续用例
+  await page.$$eval('.tree-row', (rows) => {
+    rows.find((r) => r.textContent.includes('README.md')).click();
+  });
+  await page.waitForFunction(() =>
+    document.querySelector('#docView .md-body').textContent.includes('DocShare'),
+    { timeout: 6000 });
+
   // ---- 3.7 阅读记忆: 最近浏览 + 滚动位置恢复 ----
   // 打开 README 并滚动到 300
   await page.$$eval('.tree-row', (rows) => {

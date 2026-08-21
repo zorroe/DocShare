@@ -152,7 +152,7 @@ func (s *Store) walk(dir string, node *Node) error {
 				Name:     name,
 				Path:     rel,
 				Size:     info.Size(),
-				Modified: info.ModTime().Format(time.RFC3339),
+				Modified: info.ModTime().Format(time.RFC3339Nano),
 			})
 		}
 	}
@@ -183,7 +183,7 @@ func (s *Store) ReadDoc(rel string) (content string, modified string, size int64
 	if err != nil {
 		return string(data), "", int64(len(data)), nil
 	}
-	return string(data), info.ModTime().Format(time.RFC3339), info.Size(), nil
+	return string(data), info.ModTime().Format(time.RFC3339Nano), info.Size(), nil
 }
 
 // ---- 访问记录 ----

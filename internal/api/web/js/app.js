@@ -846,7 +846,55 @@ async function pollTree() {
     state.tree = node;
     state.ready = !!data.ready;
     renderTree();
+    checkCurrentDocChanged(node); // 当前文档被外部修改/删除时自动刷新
   } catch { /* 服务不可用时静默 */ }
+}
+
+// 在目录树中按完整路径查找节点(含多根前缀)
+function findTreeNode(node, path) {
+  if (!node) return null;
+  if (node.path === path) return node;
+  for (const c of node.children || []) {
+    const found = findTreeNode(c, path);
+    if (found) return found;
+  }
+  return null;
+}
+
+let docMissingNotified = false; // 当前文档删除提示只弹一次
+
+// 当前打开的文档在磁盘上被改动时, 自动拉取并重新渲染最新内容
+function checkCurrentDocChanged(treeRoot) {
+  if (!state.currentDoc) return;
+  const node = findTreeNode(treeRoot, state.currentDoc.path);
+  if (!node) {
+    if (!docMissingNotified) {
+      docMissingNotified = true;
+      toast('当前文档已被删除或移动', 'err');
+    }
+    return;
+  }
+  docMissingNotified = false;
+  // mtime(秒级) 或大小变化即视为内容被修改
+  if (node.modified !== state.currentDoc.modified || node.size !== state.currentDoc.size) {
+    reloadCurrentDoc();
+  }
+}
+
+async function reloadCurrentDoc() {
+  const doc = state.currentDoc;
+  try {
+    const fresh = await api('/api/doc?path=' + encodeURIComponent(doc.path));
+    if (!state.currentDoc || state.currentDoc.path !== fresh.path) return; // 期间已切换文档
+    // 先保存当前阅读位置, 刷新后自动恢复到原章节
+    clearTimeout(state.scrollTimer);
+    savePos(doc.path, readingPos());
+    state.currentDoc = fresh;
+    renderDoc(fresh);
+    toast('文档已更新，已自动刷新');
+  } catch (err) {
+    toast('文档刷新失败：' + (err.message || '未知错误'), 'err');
+  }
 }
 
 // 文档正文内链接交互: 站内文档跳转 + 锚点平滑滚动(事件委托, 绑定一次)
@@ -876,6 +924,7 @@ function bindDocNav() {
    文档浏览
    ============================================================ */
 async function openDoc(path, rowEl) {
+  docMissingNotified = false; // 新开文档重置删除提示
   // 切换文档前先落盘当前阅读位置(防止 400ms 防抖窗口内切换导致位置丢失)
   if (state.currentDoc) {
     clearTimeout(state.scrollTimer);
