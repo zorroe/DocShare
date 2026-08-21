@@ -20,13 +20,11 @@ if (-not (Test-Path "$PSScriptRoot\node_modules\puppeteer-core")) {
     Pop-Location
 }
 
-# 2. 服务器可执行文件
+# 2. 服务器可执行文件(总是重新构建, 保证内嵌前端为最新代码)
 $server = "$root\release\DocShare-Server.exe"
-if (-not (Test-Path $server)) {
-    Write-Host "[2/4] 构建 CLI 服务器..." -ForegroundColor Cyan
-    go build -ldflags "-s -w" -o $server ./backend
-    if ($LASTEXITCODE -ne 0) { exit 1 }
-}
+Write-Host "[2/4] 构建 CLI 服务器..." -ForegroundColor Cyan
+go build -ldflags "-s -w" -o $server ./backend
+if ($LASTEXITCODE -ne 0) { exit 1 }
 
 # 3. 随机端口 + 临时数据目录
 $port = 18100 + (Get-Random -Maximum 400)

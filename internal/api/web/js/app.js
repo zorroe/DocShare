@@ -722,6 +722,7 @@ function restoreScroll() {
   let pos;
   try {
     pos = JSON.parse(raw);
+    if (!pos || typeof pos !== 'object') pos = { top: parseInt(raw, 10) || 0 };
   } catch {
     pos = { top: parseInt(raw, 10) || 0 }; // 兼容旧版纯数字存储
   }
@@ -1181,7 +1182,7 @@ function buildToc(docEl) {
   tocObserver = new IntersectionObserver((entries) => {
     let top = null;
     for (const en of entries) {
-      if (en.isIntersecting && (!top || en.boundingClientRect.top < top.boundingClientRect.top)) {
+      if (en.isIntersecting && (!top || en.boundingClientRect.top < top.getBoundingClientRect().top)) {
         top = en.target;
       }
     }
