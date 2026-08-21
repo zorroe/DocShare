@@ -67,12 +67,15 @@ const state = {
   collapsedDirs: new Set(), // 用户手动折叠的目录(树刷新时恢复)
   authToken: store.getItem('docshare-auth') || '',
   authEnabled: false,
+  recent: (() => { try { return JSON.parse(store.getItem('docshare-recent') || '[]'); } catch { return []; } })(),
+  scrollTimer: null,
 };
 
 /* ---------- DOM 引用 ---------- */
 const $ = (id) => document.getElementById(id);
 const els = {
   tree: $('tree'),
+  recentBox: $('recentBox'),
   search: $('searchInput'),
   themeBtn: $('themeBtn'),
   menuBtn: $('menuBtn'),
@@ -527,9 +530,58 @@ function bindExport() {
 }
 
 /* ============================================================
+   阅读记忆: 最近浏览 + 滚动位置恢复
+   ============================================================ */
+function rememberDoc(path, name) {
+  state.recent = state.recent.filter((r) => r.path !== path);
+  state.recent.unshift({ path, name, time: Date.now() });
+  state.recent = state.recent.slice(0, 8);
+  store.setItem('docshare-recent', JSON.stringify(state.recent));
+  renderRecent();
+}
+
+function renderRecent() {
+  const box = els.recentBox;
+  if (!box) return;
+  if (!state.recent.length) {
+    box.hidden = true;
+    box.innerHTML = '';
+    return;
+  }
+  box.hidden = false;
+  box.innerHTML = '<div class="recent-head">最近浏览</div>' +
+    state.recent.slice(0, 5).map((r) => `
+      <button type="button" class="recent-item" data-path="${esc(r.path)}">
+        ${ICONS.clock}<span class="recent-name">${esc(r.name)}</span>
+        <span class="recent-time">${esc(fmtTime(new Date(r.time).toISOString()))}</span>
+      </button>`).join('');
+  box.querySelectorAll('.recent-item').forEach((btn) => {
+    btn.addEventListener('click', () => openDoc(btn.dataset.path, null));
+  });
+}
+
+function restoreScroll() {
+  if (!state.currentDoc) return;
+  const saved = parseInt(store.getItem('docshare-scroll-' + state.currentDoc.path) || '0', 10);
+  if (saved > 0) els.docView.scrollTop = saved;
+}
+
+function bindScrollMemory() {
+  els.docView.addEventListener('scroll', () => {
+    clearTimeout(state.scrollTimer);
+    state.scrollTimer = setTimeout(() => {
+      if (state.currentDoc) {
+        store.setItem('docshare-scroll-' + state.currentDoc.path, String(els.docView.scrollTop));
+      }
+    }, 400);
+  });
+}
+
+/* ============================================================
    目录树
    ============================================================ */
 function renderTree() {
+  renderRecent();
   els.tree.innerHTML = '';
   const root = state.tree;
   if (!root) {
@@ -637,6 +689,7 @@ async function openDoc(path, rowEl) {
     document.querySelectorAll('.tree-row.active').forEach((r) => r.classList.remove('active'));
     if (rowEl) rowEl.classList.add('active');
     renderDoc(doc);
+    rememberDoc(doc.path, doc.name);
   } catch (err) {
     toast(err.message, 'err');
   }
@@ -674,6 +727,7 @@ function renderDoc(doc) {
     highlightTextNodes(h.querySelector('.md-body'), state.search);
   }
   els.exportBtn.disabled = false;
+  setTimeout(restoreScroll, 60); // mermaid 等异步渲染完成后恢复阅读位置
 }
 
 /* ============================================================
@@ -1051,6 +1105,8 @@ async function init() {
   // 侧边栏拖拽调宽 + 恢复上次宽度
   applySidebarWidth();
   bindSidebarResize();
+  bindScrollMemory();
+  renderRecent();
 
   // 搜索(防抖): 文件名过滤 + 全文搜索
   let debounce;

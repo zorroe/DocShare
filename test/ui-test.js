@@ -201,6 +201,29 @@ const EDGE = 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe'
     { timeout: 12000 });
   check('目录树自动刷新(删除文件)', true, '');
 
+  // ---- 3.7 阅读记忆: 最近浏览 + 滚动位置恢复 ----
+  // 打开 README 并滚动到 300
+  await page.$$eval('.tree-row', (rows) => {
+    rows.find((r) => r.textContent.includes('README.md')).click();
+  });
+  await page.waitForFunction(() => document.querySelector('#docView .md-body'), { timeout: 6000 });
+  await page.$eval('#docView', (el) => { el.scrollTop = 300; });
+  await new Promise((r) => setTimeout(r, 800)); // 等滚动保存防抖
+  // 打开另一篇文档
+  await page.$$eval('.tree-row', (rows) => {
+    rows.find((r) => r.textContent.includes('使用说明')).click();
+  });
+  await page.waitForFunction(() => document.querySelector('#docView .md-body').textContent.includes('使用说明'), { timeout: 6000 });
+  // 最近浏览区块出现
+  const recentShown = await page.$eval('#recentBox', (el) => !el.hidden && el.textContent.includes('README.md'));
+  check('最近浏览区块', recentShown, '');
+  // 点击最近浏览回到 README, 滚动位置应恢复
+  await page.click('#recentBox .recent-item');
+  await page.waitForFunction(() => document.querySelector('#docView .md-body').textContent.includes('DocShare'), { timeout: 6000 });
+  await new Promise((r) => setTimeout(r, 800));
+  const restored = await page.$eval('#docView', (el) => el.scrollTop);
+  check('阅读位置恢复', restored > 200, `scroll=${restored}`);
+
   // ---- 4. 编辑/审批功能已彻底移除 ----
   const editGone = await page.evaluate(() =>
     !document.querySelector('#editBtn') && !document.querySelector('#editMask') &&
