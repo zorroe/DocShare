@@ -932,6 +932,10 @@ async function openSettings() {
     els.setLan.checked = !!info.lan;
     els.setBlacklist.value = (info.blacklist || []).join('\n');
     els.setPassword.value = info.password || '';
+    // 版本号由后端下发(设置面板初始显示)
+    if (info.version) {
+      els.updateStatus.innerHTML = `当前版本 <code>${esc(info.version)}</code>`;
+    }
     try {
       els.setAutoStart.checked = !!(await window.go.main.App.AutoStart());
     } catch { els.setAutoStart.checked = false; }

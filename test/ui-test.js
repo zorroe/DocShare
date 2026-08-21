@@ -275,7 +275,7 @@ const EDGE = 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe'
   await page.evaluateOnNewDocument(() => {
     window.__DSH_TEST_DESKTOP = true; // 自动化测试标记: 允许 http 页面模拟桌面模式
     window.go = { main: { App: {
-      ServerInfo: async () => ({ port: 18080, docsDir: 'E:/code/DocShare/docs', docsDirs: ['E:/code/DocShare/docs'], lan: true, running: true, dataDir: 'x', error: '', blacklist: [], password: '' }),
+      ServerInfo: async () => ({ port: 18080, docsDir: 'E:/code/DocShare/docs', docsDirs: ['E:/code/DocShare/docs'], lan: true, running: true, dataDir: 'x', error: '', blacklist: [], password: '', version: '1.1.1' }),
       ListDir: async (p) => (p ? [{ name: '子目录', path: p + '/sub' }] : [{ name: 'C:\\', path: 'C:\\' }]),
       SaveConfig: async (dirs, p, l, bl, pw) => ({ port: p, docsDirs: dirs, docsDir: dirs[0] || '', lan: l, running: true }),
       OpenBrowser: async () => {},
@@ -323,6 +323,8 @@ const EDGE = 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe'
   const oneDir = await page.$$eval('#multiDirs .multi-dir-item', (els) => els.length);
   check('多目录删除', oneDir === 1, `count=${oneDir}`);
   // 检查更新(发现新版本 → 下载更新按钮)
+  const curVer = await page.$eval('#updateStatus', (el) => el.textContent);
+  check('版本号动态显示', curVer.includes('1.1.1'), curVer.slice(0, 30));
   await page.click('#checkUpdateBtn');
   await page.waitForFunction(() => document.querySelector('#updateStatus').textContent.includes('发现新版本'), { timeout: 6000 });
   check('检查更新(发现新版本)', true, '');

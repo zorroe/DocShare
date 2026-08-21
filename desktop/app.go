@@ -175,6 +175,7 @@ func (a *App) ServerInfo() map[string]any {
 		"error":     a.errMsg,
 		"blacklist": a.cfg.Blacklist,
 		"password":  a.cfg.Password, // 桌面壳页自动登录用
+		"version":   appVersion,     // 当前程序版本(设置面板显示)
 	}
 }
 
@@ -298,7 +299,7 @@ func (a *App) ListAccessLogs() []store.AccessRecord {
 
 // ---- 自动更新 ----
 
-const appVersion = "1.1.1"
+const appVersion = "1.1.2"
 
 // UpdateInfo 更新检查结果。
 type UpdateInfo struct {
