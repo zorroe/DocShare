@@ -17,3 +17,4 @@ if ($goVer -ne $wsVer) {
     exit 1
 }
 Write-Host "[OK] 版本一致: v$goVer" -ForegroundColor Green
+exit 0

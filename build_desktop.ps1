@@ -11,7 +11,7 @@ Set-Location $root
 
 # 0. 版本一致性校验(发布前必查)
 & "$root\tools\check-version.ps1"
-if ($LASTEXITCODE -ne 0) { exit 1 }
+if ($LASTEXITCODE) { exit 1 } # 空/0 均视为通过, 非 0 失败
 # 清理构建残留(中断的 go build 可能留下 *.exe~)
 Remove-Item "$root\release\*.exe~" -ErrorAction SilentlyContinue
 
