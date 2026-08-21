@@ -519,7 +519,7 @@ const EDGE = 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe'
     '-addr', '127.0.0.1:' + authPort,
     '-data', path.join(os.tmpdir(), 'dshtest-auth-' + Date.now()),
     '-password', 'test-pass',
-    '-lockout', '1', // 1 秒锁定, 便于测试
+    '-lockout', '5', // 5 秒锁定(CI 上失败循环较慢, 需留足余量)
   ], { stdio: 'ignore', windowsHide: true });
   await new Promise((r) => setTimeout(r, 1500));
   const page2 = await browser.newPage();
@@ -545,7 +545,7 @@ const EDGE = 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe'
   await page2.waitForFunction(() => document.querySelector('#loginError').textContent.includes('再试'), { timeout: 6000 });
   check('连续失败锁定(正确密码也被拒)', true, '');
   // 锁定期过后恢复
-  await new Promise((r) => setTimeout(r, 1500));
+  await new Promise((r) => setTimeout(r, 5600));
   await page2.$eval('#loginPassword', (el) => { el.value = ''; });
   await page2.type('#loginPassword', 'test-pass');
   await page2.click('#loginBtn');
