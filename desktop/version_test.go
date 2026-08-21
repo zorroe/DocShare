@@ -62,3 +62,27 @@ func TestDownloadFileError(t *testing.T) {
 		t.Fatalf("错误信息应含状态码: %v", err)
 	}
 }
+
+func TestWriteUpdateBat(t *testing.T) {
+	// 含空格路径(最易出问题的场景)
+	installer := `C:\Users\test user\AppData\Local\Temp\DocShare-Setup-1.1.1.exe`
+	batPath := filepath.Join(t.TempDir(), "update.bat")
+	if err := writeUpdateBat(batPath, installer); err != nil {
+		t.Fatal(err)
+	}
+	content, err := os.ReadFile(batPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(content)
+	want := `start "" "C:\Users\test user\AppData\Local\Temp\DocShare-Setup-1.1.1.exe"`
+	if !strings.Contains(s, want) {
+		t.Fatalf("bat 应包含正确的 start 命令:\n---\n%s\n---\n缺少: %s", s, want)
+	}
+	if !strings.Contains(s, "timeout /t 3") {
+		t.Fatalf("bat 应包含延迟: %s", s)
+	}
+	if !strings.Contains(s, "del \"%~f0\"") {
+		t.Fatalf("bat 应自删: %s", s)
+	}
+}

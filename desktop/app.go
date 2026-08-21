@@ -298,7 +298,7 @@ func (a *App) ListAccessLogs() []store.AccessRecord {
 
 // ---- 自动更新 ----
 
-const appVersion = "1.1.0"
+const appVersion = "1.1.1"
 
 // UpdateInfo 更新检查结果。
 type UpdateInfo struct {
@@ -393,6 +393,16 @@ func (a *App) DownloadUpdate() (string, error) {
 	return dest, nil
 }
 
+// writeUpdateBat 生成延迟启动安装程序的批处理脚本。
+// 通过临时 .bat 文件避免 cmd /c 内嵌引号的转义问题(路径含空格时尤其重要)。
+func writeUpdateBat(batPath, installerPath string) error {
+	content := "@echo off\r\n" +
+		"timeout /t 3 /nobreak >nul\r\n" +
+		"start \"\" \"" + installerPath + "\"\r\n" +
+		"del \"%~f0\"\r\n"
+	return os.WriteFile(batPath, []byte(content), 0o644)
+}
+
 // ApplyUpdate 延迟启动安装程序(等待本应用退出)并退出当前应用。
 func (a *App) ApplyUpdate(installerPath string) error {
 	if installerPath == "" {
@@ -401,9 +411,12 @@ func (a *App) ApplyUpdate(installerPath string) error {
 	if _, err := os.Stat(installerPath); err != nil {
 		return fmt.Errorf("安装包不存在: %s", installerPath)
 	}
-	// 3 秒后运行安装程序(等本应用完全退出释放文件占用)
-	cmd := exec.Command("cmd", "/c",
-		fmt.Sprintf(`timeout /t 3 /nobreak >nul & start "" "%s"`, installerPath))
+	// 批处理: 3 秒后启动安装程序(等本应用完全退出释放文件占用), 随后自删
+	batPath := filepath.Join(os.TempDir(), "docshare-update.bat")
+	if err := writeUpdateBat(batPath, installerPath); err != nil {
+		return fmt.Errorf("创建更新脚本失败: %v", err)
+	}
+	cmd := exec.Command("cmd", "/c", batPath)
 	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("启动安装程序失败: %v", err)
