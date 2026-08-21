@@ -57,12 +57,14 @@ const ICONS = {
 /* ---------- 状态 ---------- */
 const state = {
   tree: null,
+  treeSig: '',
   ready: false, // 文档目录是否已配置
   currentDoc: null, // { path, name, content, modified }
   search: '',
   theme: store.getItem('docshare-theme') || 'dark',
   apiBase: '', // 桌面壳页(wails://)下指向 http://127.0.0.1:端口
   serverInfo: null,
+  collapsedDirs: new Set(), // 用户手动折叠的目录(树刷新时恢复)
 };
 
 /* ---------- DOM 引用 ---------- */
@@ -314,6 +316,11 @@ function renderTree() {
     return;
   }
   shown.forEach((node) => els.tree.appendChild(buildNode(node)));
+  // 恢复当前打开文档的高亮
+  if (state.currentDoc) {
+    const row = els.tree.querySelector(`.tree-row[data-path="${CSS.escape(state.currentDoc.path)}"]`);
+    if (row) row.classList.add('active');
+  }
 }
 
 function buildNode(node) {
@@ -325,16 +332,23 @@ function buildNode(node) {
     const row = document.createElement('button');
     row.type = 'button';
     row.className = 'tree-row';
+    row.dataset.path = node.path;
     row.innerHTML = `${ICONS.chevron}${ICONS.folder}<span class="row-label">${esc(node.name)}</span>`;
     const children = document.createElement('div');
     children.className = 'tree-children';
+    // 恢复用户折叠状态(默认展开)
+    const isCollapsed = state.collapsedDirs.has(node.path);
+    if (isCollapsed) children.classList.add('collapsed');
+    row.querySelector('.chevron').classList.toggle('open', !isCollapsed);
     node.children.forEach((c) => children.appendChild(buildNode(c)));
     bindTreeTip(row, node.path === '.' ? node.name : node.path);
 
     row.addEventListener('click', () => {
       const chev = row.querySelector('.chevron');
-      chev.classList.toggle('open');
-      children.classList.toggle('collapsed');
+      const nowCollapsed = children.classList.toggle('collapsed');
+      chev.classList.toggle('open', !nowCollapsed);
+      if (nowCollapsed) state.collapsedDirs.add(node.path);
+      else state.collapsedDirs.delete(node.path);
     });
     wrap.appendChild(row);
     wrap.appendChild(children);
@@ -342,12 +356,30 @@ function buildNode(node) {
     const row = document.createElement('button');
     row.type = 'button';
     row.className = 'tree-row';
+    row.dataset.path = node.path;
     row.innerHTML = `${ICONS.chevron}${ICONS.file}<span class="row-label">${esc(node.name)}</span><span class="row-name">${esc(fmtSize(node.size))}</span>`;
     row.addEventListener('click', () => openDoc(node.path, row));
     bindTreeTip(row, node.path);
     wrap.appendChild(row);
   }
   return wrap;
+}
+
+/* ============================================================
+   目录树自动刷新: 每 3 秒静默轮询, 结构变化才重渲染
+   ============================================================ */
+async function pollTree() {
+  if (els.search.value.trim()) return; // 搜索中不打扰
+  try {
+    const data = await api('/api/tree');
+    const node = data.node || data;
+    const sig = JSON.stringify(node);
+    if (sig === state.treeSig) return;
+    state.treeSig = sig;
+    state.tree = node;
+    state.ready = !!data.ready;
+    renderTree();
+  } catch { /* 服务不可用时静默 */ }
 }
 
 /* ============================================================
@@ -776,17 +808,19 @@ async function init() {
     } catch { /* bind 暂不可用, 保持相对路径 */ }
   }
 
-  // 加载目录树
+  // 加载目录树 + 启动自动刷新(文档增删改后 ≤3s 更新)
   try {
     const data = await api('/api/tree');
     state.tree = data.node || data;
     state.ready = !!data.ready;
+    state.treeSig = JSON.stringify(state.tree);
     renderTree();
   } catch (err) {
     els.tree.innerHTML = DESKTOP
       ? `<div class="tree-empty">本地服务不可用（${esc(err.message)}）<br/><span style="font-size:12px;opacity:.75">请打开「设置」检查服务状态</span></div>`
       : `<div class="tree-empty">${esc(err.message)}</div>`;
   }
+  setInterval(pollTree, 3000);
 }
 
 document.addEventListener('DOMContentLoaded', init);

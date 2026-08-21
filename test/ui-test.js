@@ -1,5 +1,7 @@
 /* DocShare 前端自动化冒烟测试 (puppeteer-core + 本机 Edge) */
 const puppeteer = require('puppeteer-core');
+const fs = require('fs');
+const path = require('path');
 
 const BASE = process.env.DS_BASE || 'http://127.0.0.1:18080';
 const TOKEN = process.env.DS_TOKEN || 'ui-test-token';
@@ -145,6 +147,19 @@ const EDGE = 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe'
   check('清空搜索隐藏结果', srHidden, '');
   const treeRestored = await page.$eval('#tree', (el) => el.textContent.includes('README.md'));
   check('清空后目录树恢复', treeRestored, '');
+
+  // ---- 3.6 目录树自动刷新(增删文件 ≤3s 自动更新) ----
+  const tmpDoc = path.join(__dirname, '..', 'docs', '_auto_refresh_test.md');
+  fs.writeFileSync(tmpDoc, '# 自动刷新测试\n\n临时文档, 测试后删除。');
+  await page.waitForFunction(() =>
+    document.querySelector('#tree').textContent.includes('_auto_refresh_test'),
+    { timeout: 12000 });
+  check('目录树自动刷新(新增文件)', true, '');
+  fs.unlinkSync(tmpDoc);
+  await page.waitForFunction(() =>
+    !document.querySelector('#tree').textContent.includes('_auto_refresh_test'),
+    { timeout: 12000 });
+  check('目录树自动刷新(删除文件)', true, '');
 
   // ---- 4. 编辑/审批功能已彻底移除 ----
   const editGone = await page.evaluate(() =>
