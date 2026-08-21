@@ -378,7 +378,7 @@ function renderMd(md, container, basePath) {
     try { hljs.highlightElement(el); } catch { /* ignore */ }
   });
   addCopyButtons(container);
-  renderMermaid(container);
+  return renderMermaid(container); // 返回 Promise: Mermaid 全部渲染完成后 resolve
 }
 
 /* ============================================================
@@ -661,18 +661,89 @@ function clearRecent() {
 
 function restoreScroll() {
   if (!state.currentDoc) return;
-  const saved = parseInt(store.getItem('docshare-scroll-' + state.currentDoc.path) || '0', 10);
-  if (saved > 0) els.docView.scrollTop = saved;
+  const raw = store.getItem('docshare-scroll-' + state.currentDoc.path);
+  if (!raw) return;
+  let pos;
+  try {
+    pos = JSON.parse(raw);
+  } catch {
+    pos = { top: parseInt(raw, 10) || 0 }; // 兼容旧版纯数字存储
+  }
+  const view = els.docView;
+  if (!view.scrollHeight) return;
+  // 1) 快速恢复: 直接按上次像素位置(内容未变化时一步到位)
+  if (pos.top > 0 && pos.top < view.scrollHeight) view.scrollTop = pos.top;
+  // 2) 章节锚点校正: 找到上次所在的标题, 按其位置 + 段内偏移恢复(文档被编辑过也能定位)
+  if (pos.heading) {
+    const heads = [...view.querySelectorAll('.md-body h1, .md-body h2, .md-body h3, .md-body h4, .md-body h5, .md-body h6')];
+    const target = heads.find((h) => h.textContent.trim() === pos.heading);
+    if (target) {
+      view.scrollTop = Math.max(0, Math.round(posInView(target) + (pos.delta || 0)));
+      return;
+    }
+  }
+  // 3) 兜底: 按阅读比例恢复(标题找不到或内容大幅变化)
+  if (pos.ratio > 0) {
+    view.scrollTop = Math.round(pos.ratio * view.scrollHeight);
+  }
+}
+
+// 元素在 #docView 滚动坐标系中的位置(与 offsetParent 无关)
+function posInView(el) {
+  return el.getBoundingClientRect().top - els.docView.getBoundingClientRect().top + els.docView.scrollTop;
+}
+
+// 当前阅读位置: 视口顶部附近的标题 + 段内偏移 + 像素/比例
+function readingPos() {
+  if (!state.currentDoc) return null;
+  const view = els.docView;
+  const top = view.scrollTop;
+  let heading = '';
+  let delta = top;
+  const heads = [...view.querySelectorAll('.md-body h1, .md-body h2, .md-body h3, .md-body h4, .md-body h5, .md-body h6')];
+  let prev = null;
+  for (const h of heads) {
+    if (posInView(h) <= top + 24) prev = h; // 最后一个位于视口顶部(±24px)的标题
+    else break;
+  }
+  if (prev) {
+    heading = prev.textContent.trim();
+    delta = Math.round(top - posInView(prev));
+  }
+  return { top: Math.round(top), heading, delta, ratio: view.scrollHeight ? top / view.scrollHeight : 0 };
+}
+
+function savePos(path, pos) {
+  if (!pos) return;
+  store.setItem('docshare-scroll-' + path, JSON.stringify(pos));
 }
 
 function bindScrollMemory() {
   els.docView.addEventListener('scroll', () => {
+    if (!state.currentDoc) return;
+    // 在事件时刻就固定 path 与位置, 避免防抖窗口内切换文档导致存错
+    const p = state.currentDoc.path;
+    const pos = readingPos();
     clearTimeout(state.scrollTimer);
-    state.scrollTimer = setTimeout(() => {
-      if (state.currentDoc) {
-        store.setItem('docshare-scroll-' + state.currentDoc.path, String(els.docView.scrollTop));
-      }
-    }, 400);
+    state.scrollTimer = setTimeout(() => savePos(p, pos), 400);
+  });
+}
+
+// 等待容器内所有图片加载完成(含加载失败), 3 秒兜底超时
+function waitImages(container) {
+  const imgs = [...container.querySelectorAll('img')];
+  if (!imgs.length) return Promise.resolve();
+  return new Promise((resolve) => {
+    let left = imgs.length;
+    const timer = setTimeout(resolve, 3000);
+    const done = () => {
+      if (--left <= 0) { clearTimeout(timer); resolve(); }
+    };
+    imgs.forEach((img) => {
+      if (img.complete) { done(); return; }
+      img.addEventListener('load', done);
+      img.addEventListener('error', done);
+    });
   });
 }
 
@@ -805,6 +876,11 @@ function bindDocNav() {
    文档浏览
    ============================================================ */
 async function openDoc(path, rowEl) {
+  // 切换文档前先落盘当前阅读位置(防止 400ms 防抖窗口内切换导致位置丢失)
+  if (state.currentDoc) {
+    clearTimeout(state.scrollTimer);
+    savePos(state.currentDoc.path, readingPos());
+  }
   try {
     const doc = await api('/api/doc?path=' + encodeURIComponent(path));
     state.currentDoc = doc;
@@ -841,15 +917,23 @@ function renderDoc(doc) {
     <div class="md-body"></div>`;
   els.docView.innerHTML = '';
   els.docView.appendChild(h);
-  renderMd(doc.content, h.querySelector('.md-body'), doc.path);
+  const mdBody = h.querySelector('.md-body');
+  const mdReady = renderMd(doc.content, mdBody, doc.path); // 同步完成 innerHTML, 返回 Mermaid 渲染 Promise
   buildToc(h);
 
   // 全文搜索关键词高亮
   if (state.search) {
-    highlightTextNodes(h.querySelector('.md-body'), state.search);
+    highlightTextNodes(mdBody, state.search);
   }
   els.exportBtn.disabled = false;
-  setTimeout(restoreScroll, 60); // mermaid 等异步渲染完成后恢复阅读位置
+  // 快速恢复一次(内容未变化时立刻到位)
+  setTimeout(restoreScroll, 60);
+  // Mermaid 与图片渲染完成后再精确恢复一次:
+  // 此前内容高度尚未定型(图片/图表异步加载), 直接恢复的位置会偏移
+  const settled = Promise.allSettled([mdReady, waitImages(mdBody)]);
+  settled.then(() => {
+    if (state.currentDoc && state.currentDoc.path === doc.path) restoreScroll();
+  });
 }
 
 /* ============================================================

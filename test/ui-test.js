@@ -264,7 +264,7 @@ const EDGE = 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe'
   await page.waitForFunction(() => document.querySelector('#docView .md-body').textContent.includes('DocShare'), { timeout: 6000 });
   await new Promise((r) => setTimeout(r, 800));
   const restored = await page.$eval('#docView', (el) => el.scrollTop);
-  check('阅读位置恢复', restored > 200, `scroll=${restored}`);
+  check('阅读位置恢复', Math.abs(restored - 300) <= 2, `scroll=${restored}`);
   // 清除最近浏览
   await page.click('#recentBox .recent-clear');
   await new Promise((r) => setTimeout(r, 300));
