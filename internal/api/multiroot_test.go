@@ -60,6 +60,7 @@ func TestMultiRootTree(t *testing.T) {
 				IsDir    bool   `json:"isDir"`
 				Children []struct {
 					Name string `json:"name"`
+					Path string `json:"path"`
 				} `json:"children"`
 			} `json:"children"`
 		} `json:"node"`
@@ -78,7 +79,17 @@ func TestMultiRootTree(t *testing.T) {
 		if !c.IsDir {
 			t.Fatalf("根节点应为目录: %s", c.Name)
 		}
+		if c.Path != c.Name {
+			t.Fatalf("根节点 path 应为自身名: %s != %s", c.Path, c.Name)
+		}
 		names[c.Name] = len(c.Children)
+		// 子节点路径必须带根名前缀(否则 /api/doc 无法路由)
+		for _, child := range c.Children {
+			want := c.Name + "/" + child.Name
+			if child.Path != want {
+				t.Fatalf("子节点 %q 的 path 应为 %q, got %q", child.Name, want, child.Path)
+			}
+		}
 	}
 	if names["root-a"] != 1 || names["root-b"] != 1 {
 		t.Fatalf("根节点文件数错误: %v", names)

@@ -1104,7 +1104,7 @@ mark.search-hit {
 }
 .form-item { display: flex; flex-direction: column; gap: 7px; }
 .form-item > label { font-size: 13px; font-weight: 600; color: var(--text-2); }
-.form-item input[type="text"], .form-item input[type="number"] {
+.form-item input[type="text"], .form-item input[type="number"], .form-item input[type="password"] {
   width: 100%;
   padding: 9px 13px;
   border: 1px solid var(--border);
@@ -1135,6 +1135,30 @@ mark.search-hit {
 
 .dir-row { display: flex; gap: 10px; }
 .dir-row input { flex: 1; min-width: 0; }
+
+/* 密码输入(带显示/隐藏切换) */
+.pwd-wrap { position: relative; display: flex; }
+.pwd-wrap input[type="password"], .pwd-wrap input[type="text"] {
+  padding-right: 40px;
+}
+.pwd-toggle {
+  position: absolute;
+  right: 4px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 30px;
+  height: 30px;
+  display: grid;
+  place-items: center;
+  border: none;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--text-3);
+  cursor: pointer;
+  transition: all var(--transition);
+}
+.pwd-toggle:hover { color: var(--accent); background: var(--surface-3); }
+.pwd-toggle svg { width: 15px; height: 15px; }
 
 /* 多目录列表 */
 .multi-dirs {

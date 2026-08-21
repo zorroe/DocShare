@@ -337,11 +337,26 @@ func (s *Server) handleTree(w http.ResponseWriter, r *http.Request) {
 		if st.Ready() {
 			ready = true
 		}
-		tree.Name = rootName(st)
-		tree.Path = rootName(st)
+		name := rootName(st)
+		tree.Name = name
+		tree.Path = name
+		// 子节点路径补根名前缀, 保证 /api/doc 能正确路由到对应根
+		for _, c := range tree.Children {
+			prefixTreePath(c, name)
+		}
 		root.Children = append(root.Children, tree)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ready": ready, "node": root})
+}
+
+// prefixTreePath 递归为节点路径添加根前缀(多根模式)。
+func prefixTreePath(node *store.Node, prefix string) {
+	if node.Path != "." {
+		node.Path = prefix + "/" + node.Path
+	}
+	for _, c := range node.Children {
+		prefixTreePath(c, prefix)
+	}
 }
 
 func (s *Server) handleDoc(w http.ResponseWriter, r *http.Request) {

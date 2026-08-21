@@ -132,7 +132,12 @@
         </div>
         <div class="form-item">
           <label for="setPassword">访问密码</label>
-          <input id="setPassword" type="password" placeholder="留空 = 不启用（所有访客免密访问）" autocomplete="off" />
+          <div class="pwd-wrap">
+            <input id="setPassword" type="password" placeholder="留空 = 不启用（所有访客免密访问）" autocomplete="off" />
+            <button type="button" class="pwd-toggle" id="pwdToggle" title="显示/隐藏密码" aria-label="显示/隐藏密码">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+            </button>
+          </div>
           <p class="form-hint">启用后，局域网访问需输入密码才能浏览（桌面端自动登录，无需输入）。</p>
         </div>
         <div class="form-item">

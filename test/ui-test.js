@@ -293,6 +293,18 @@ const EDGE = 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe'
   await page.waitForSelector('#settingsMask:not([hidden])');
   const docsDirVal = await page.$eval('#multiDirs', (el) => el.textContent);
   check('设置面板回填配置', docsDirVal.includes('DocShare/docs'), docsDirVal.slice(0, 40));
+  // 密码输入框: 样式 + 显示/隐藏切换
+  const pwdStyled = await page.$eval('#setPassword', (el) => {
+    const cs = getComputedStyle(el);
+    return cs.borderRadius !== '0px' && cs.padding !== '0px';
+  });
+  check('密码框样式统一', pwdStyled, '');
+  await page.click('#pwdToggle');
+  const pwdText = await page.$eval('#setPassword', (el) => el.type === 'text');
+  check('密码显示切换', pwdText, '');
+  await page.click('#pwdToggle');
+  const pwdHidden = await page.$eval('#setPassword', (el) => el.type === 'password');
+  check('密码隐藏切换', pwdHidden, '');
   // 多目录: 添加 + 删除
   await page.$eval('#setDocsDir', (el) => { el.value = 'D:/second-docs'; });
   await page.click('#addDirBtn');
