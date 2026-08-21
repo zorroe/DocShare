@@ -2,6 +2,9 @@
 const puppeteer = require('puppeteer-core');
 const fs = require('fs');
 const path = require('path');
+const { spawn } = require('child_process');
+
+const SERVER = process.env.DS_SERVER || path.join(__dirname, '..', 'release', 'DocShare-Server.exe');
 
 const BASE = process.env.DS_BASE || 'http://127.0.0.1:18080';
 const TOKEN = process.env.DS_TOKEN || 'ui-test-token';
@@ -269,6 +272,39 @@ const EDGE = 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe'
   const accessIp = await page.$eval('.access-row .access-ip', (el) => el.textContent);
   check('访问记录列表', accessDoc.includes('README.md') && accessIp.includes('192.168.1.5'), `${accessDoc} @ ${accessIp}`);
   await page.click('#accessMask [data-close]');
+
+  // ---- 8. 访问密码登录流程(内嵌启动密码服务, 随机端口避免残留冲突) ----
+  const authPort = 18100 + Math.floor(Math.random() * 400);
+  const authServer = spawn(SERVER, [
+    '-dir', path.join(__dirname, '..', 'docs'),
+    '-addr', '127.0.0.1:' + authPort,
+    '-data', path.join(__dirname, '..', 'backend', 'data'),
+    '-password', 'test-pass',
+  ], { stdio: 'ignore', windowsHide: true });
+  await new Promise((r) => setTimeout(r, 1500));
+  const page2 = await browser.newPage();
+  await page2.setViewport({ width: 1440, height: 900 });
+  await page2.goto('http://127.0.0.1:' + authPort + '/', { waitUntil: 'networkidle0' });
+  const maskVisible = await page2.$eval('#loginMask', (el) => !el.hidden);
+  check('访问密码遮罩显示', maskVisible, '');
+  // 错误密码
+  await page2.type('#loginPassword', 'wrong-pass');
+  await page2.click('#loginBtn');
+  await page2.waitForFunction(() => !document.querySelector('#loginError').hidden, { timeout: 6000 });
+  check('错误密码拒绝', true, '');
+  // 正确密码
+  await page2.$eval('#loginPassword', (el) => { el.value = ''; });
+  await page2.type('#loginPassword', 'test-pass');
+  await page2.click('#loginBtn');
+  await page2.waitForFunction(() => document.querySelector('#tree').textContent.includes('README.md'), { timeout: 10000 });
+  check('正确密码进入', true, '');
+  // 刷新免登录(token 记忆)
+  await page2.reload({ waitUntil: 'networkidle0' });
+  await page2.waitForFunction(() => document.querySelector('#tree').textContent.includes('README.md'), { timeout: 10000 });
+  const noMask = await page2.$eval('#loginMask', (el) => el.hidden);
+  check('刷新免登录', noMask, '');
+  await page2.close();
+  authServer.kill();
 
   await browser.close();
   const failed = results.filter((r) => !r.ok);

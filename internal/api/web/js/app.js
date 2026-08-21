@@ -65,6 +65,8 @@ const state = {
   apiBase: '', // 桌面壳页(wails://)下指向 http://127.0.0.1:端口
   serverInfo: null,
   collapsedDirs: new Set(), // 用户手动折叠的目录(树刷新时恢复)
+  authToken: store.getItem('docshare-auth') || '',
+  authEnabled: false,
 };
 
 /* ---------- DOM 引用 ---------- */
@@ -77,6 +79,10 @@ const els = {
   menuPop: $('menuPop'),
   menuThemeLabel: $('menuThemeLabel'),
   searchResults: $('searchResults'),
+  loginMask: $('loginMask'),
+  loginPassword: $('loginPassword'),
+  loginError: $('loginError'),
+  loginBtn: $('loginBtn'),
   sidebar: document.querySelector('.sidebar'),
   resizer: $('sidebarResizer'),
   docView: $('docView'),
@@ -89,6 +95,7 @@ const els = {
   setPort: $('setPort'),
   setLan: $('setLan'),
   setAutoStart: $('setAutoStart'),
+  setPassword: $('setPassword'),
   setBlacklist: $('setBlacklist'),
   saveSettingsBtn: $('saveSettingsBtn'),
   openBrowserBtn: $('openBrowserBtn'),
@@ -139,6 +146,7 @@ function toast(msg, type = 'ok', ms = 2600) {
 /* ---------- API 封装 ---------- */
 async function api(path, opts = {}) {
   const headers = { 'Content-Type': 'application/json', ...(opts.headers || {}) };
+  if (state.authToken && !opts.noAuth) headers['Authorization'] = 'Bearer ' + state.authToken;
   const res = await fetch(state.apiBase + path, { ...opts, headers, body: opts.body ? JSON.stringify(opts.body) : undefined });
   let data = null;
   try { data = await res.json(); } catch { /* ignore */ }
@@ -149,6 +157,57 @@ async function api(path, opts = {}) {
     throw err;
   }
   return data;
+}
+
+/* ============================================================
+   访问密码认证
+   ============================================================ */
+async function checkAuth() {
+  let status;
+  try {
+    status = await api('/api/auth/status'); // 携带已有 token, 服务端判断是否已认证
+  } catch {
+    return true; // 服务不可用时放行(由其他逻辑提示)
+  }
+  state.authEnabled = !!status.enabled;
+  if (!status.enabled) return true; // 未启用密码, 直接放行
+  if (status.authed) {
+    state.authToken = store.getItem('docshare-auth') || '';
+    return true;
+  }
+  // 未认证: 桌面端自动登录(管理员密码), 否则显示登录遮罩
+  if (DESKTOP && state.serverInfo && state.serverInfo.password) {
+    try {
+      const res = await api('/api/auth/login', { noAuth: true, method: 'POST', body: { password: state.serverInfo.password } });
+      state.authToken = res.token;
+      store.setItem('docshare-auth', res.token);
+      return true;
+    } catch { /* 自动登录失败则走遮罩 */ }
+  }
+  showLogin();
+  return false;
+}
+
+function showLogin() {
+  els.loginMask.hidden = false;
+  setTimeout(() => els.loginPassword.focus(), 100);
+}
+
+async function doLogin() {
+  const pw = els.loginPassword.value;
+  if (!pw) return;
+  try {
+    const res = await api('/api/auth/login', { noAuth: true, method: 'POST', body: { password: pw } });
+    state.authToken = res.token;
+    store.setItem('docshare-auth', res.token);
+    els.loginMask.hidden = true;
+    els.loginError.hidden = true;
+    location.reload(); // 重新初始化
+  } catch {
+    els.loginError.hidden = false;
+    els.loginPassword.value = '';
+    els.loginPassword.focus();
+  }
 }
 
 /* ============================================================
@@ -690,6 +749,7 @@ async function openSettings() {
     els.setPort.value = info.port || 8080;
     els.setLan.checked = !!info.lan;
     els.setBlacklist.value = (info.blacklist || []).join('\n');
+    els.setPassword.value = info.password || '';
     try {
       els.setAutoStart.checked = !!(await window.go.main.App.AutoStart());
     } catch { els.setAutoStart.checked = false; }
@@ -705,10 +765,11 @@ async function saveSettings() {
   const port = parseInt(els.setPort.value, 10);
   if (!port || port < 1 || port > 65535) { toast('端口无效', 'err'); return; }
   const blacklist = els.setBlacklist.value.split('\n').map((s) => s.trim()).filter(Boolean);
+  const password = els.setPassword.value.trim();
   els.saveSettingsBtn.disabled = true;
   els.settingsStatus.textContent = '应用配置中…';
   try {
-    const info = await window.go.main.App.SaveConfig(dir, port, els.setLan.checked, blacklist);
+    const info = await window.go.main.App.SaveConfig(dir, port, els.setLan.checked, blacklist, password);
     els.settingsStatus.textContent = '已保存，服务已重启';
     toast('配置已保存，服务已重启');
     setTimeout(() => { if (info.running) location.reload(); }, 500);
@@ -905,6 +966,14 @@ async function init() {
       }
     } catch { /* bind 暂不可用, 保持相对路径 */ }
   }
+
+  // 访问密码认证(未通过则显示登录遮罩)
+  els.loginBtn.addEventListener('click', doLogin);
+  els.loginPassword.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') doLogin();
+  });
+  const authed = await checkAuth();
+  if (!authed) return; // 登录成功后页面 reload 重新初始化
 
   // 加载目录树 + 启动自动刷新(文档增删改后 ≤3s 更新)
   try {

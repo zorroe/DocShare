@@ -118,6 +118,11 @@
           <p class="form-hint">登录 Windows 后自动运行 DocShare（写入当前用户启动项）。</p>
         </div>
         <div class="form-item">
+          <label for="setPassword">访问密码</label>
+          <input id="setPassword" type="password" placeholder="留空 = 不启用（所有访客免密访问）" autocomplete="off" />
+          <p class="form-hint">启用后，局域网访问需输入密码才能浏览（桌面端自动登录，无需输入）。</p>
+        </div>
+        <div class="form-item">
           <label for="setBlacklist">IP 黑名单</label>
           <textarea id="setBlacklist" rows="3" placeholder="每行一个 IP 或网段，例如：&#10;192.168.1.66&#10;10.0.0.0/8" spellcheck="false"></textarea>
           <p class="form-hint">被列入的 IP 将无法访问任何页面（支持精确 IP 与 CIDR 网段），保存后立即生效。注意：本机 127.0.0.1 也在拦截范围内。</p>
@@ -175,6 +180,20 @@
           <button id="accessRefresh" class="btn ghost" type="button">刷新</button>
         </div>
       </footer>
+    </div>
+  </div>
+
+  <!-- ======== 访问密码登录遮罩 ======== -->
+  <div id="loginMask" class="login-mask" hidden>
+    <div class="login-card">
+      <div class="login-logo">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
+      </div>
+      <h2>DocShare</h2>
+      <p class="login-sub">该文档中心已启用访问密码</p>
+      <input id="loginPassword" type="password" placeholder="请输入访问密码" autocomplete="off" />
+      <p id="loginError" class="login-error" hidden>密码错误，请重试</p>
+      <button id="loginBtn" class="btn primary login-btn" type="button">进入</button>
     </div>
   </div>
 

@@ -15,6 +15,7 @@ type Config struct {
 	Port      int      `json:"port"`      // HTTP 端口
 	LAN       bool     `json:"lan"`       // 是否允许局域网访问
 	Blacklist []string `json:"blacklist"` // IP 黑名单(精确 IP 或 CIDR)
+	Password  string   `json:"password"`  // 只读访问密码(空 = 不启用)
 }
 
 // Default 返回默认配置。

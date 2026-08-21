@@ -105,7 +105,7 @@ func (a *App) startServer() error {
 		return err
 	}
 	a.st = st
-	srv, err := api.New(st, "", api.WebFS, a.cfg.Blacklist)
+	srv, err := api.New(st, "", api.WebFS, a.cfg.Blacklist, a.cfg.Password)
 	if err != nil {
 		return err
 	}
@@ -157,6 +157,7 @@ func (a *App) ServerInfo() map[string]any {
 		"dataDir":   a.dataDir,
 		"error":     a.errMsg,
 		"blacklist": a.cfg.Blacklist,
+		"password":  a.cfg.Password, // 桌面壳页自动登录用
 	}
 }
 
@@ -203,7 +204,7 @@ func (a *App) listDrives() ([]DirEntry, error) {
 }
 
 // SaveConfig 保存配置并重启服务。
-func (a *App) SaveConfig(docsDir string, port int, lan bool, blacklist []string) (map[string]any, error) {
+func (a *App) SaveConfig(docsDir string, port int, lan bool, blacklist []string, password string) (map[string]any, error) {
 	if port <= 0 || port > 65535 {
 		return nil, fmt.Errorf("端口必须在 1-65535 之间")
 	}
@@ -216,6 +217,7 @@ func (a *App) SaveConfig(docsDir string, port int, lan bool, blacklist []string)
 	a.cfg.DocsDir = strings.TrimSpace(docsDir)
 	a.cfg.Port = port
 	a.cfg.LAN = lan
+	a.cfg.Password = strings.TrimSpace(password)
 	var bl []string
 	for _, b := range blacklist {
 		b = strings.TrimSpace(b)

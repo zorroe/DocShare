@@ -2,6 +2,11 @@
 package api
 
 import (
+	"crypto/hmac"
+	"crypto/rand"
+	"crypto/sha256"
+	"crypto/subtle"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"io"
@@ -20,16 +25,25 @@ import (
 
 // Server 聚合 HTTP 处理所需依赖。
 type Server struct {
-	st        *store.Store
-	frontDir  string // 磁盘前端目录(可选, 调试用); 为空时使用内嵌资源
-	webFS     fs.FS  // 内嵌前端资源
-	blacklist []string // IP 黑名单(精确 IP 或 CIDR)
+	st         *store.Store
+	frontDir   string   // 磁盘前端目录(可选, 调试用); 为空时使用内嵌资源
+	webFS      fs.FS    // 内嵌前端资源
+	blacklist  []string // IP 黑名单(精确 IP 或 CIDR)
+	password   string   // 只读访问密码(空 = 不启用)
+	authSecret []byte   // 会话令牌签名密钥
 }
 
 // New 创建 Server。
 // frontDir 非空且存在时优先使用磁盘目录, 否则使用 webFS 内嵌资源。
-func New(st *store.Store, frontDir string, webFS fs.FS, blacklist []string) (*Server, error) {
-	s := &Server{st: st, webFS: webFS}
+func New(st *store.Store, frontDir string, webFS fs.FS, blacklist []string, password string) (*Server, error) {
+	s := &Server{st: st, webFS: webFS, password: password}
+	if s.password != "" {
+		b := make([]byte, 16)
+		if _, err := rand.Read(b); err != nil {
+			return nil, err
+		}
+		s.authSecret = b
+	}
 	if frontDir != "" {
 		absFront, err := filepath.Abs(frontDir)
 		if err != nil {
@@ -68,8 +82,99 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/tree", s.handleTree)
 	mux.HandleFunc("GET /api/doc", s.handleDoc)
 	mux.HandleFunc("GET /api/search", s.handleSearch)
+	mux.HandleFunc("GET /api/auth/status", s.handleAuthStatus)
+	mux.HandleFunc("POST /api/auth/login", s.handleAuthLogin)
 	mux.HandleFunc("/", s.handleStatic)
-	return logRequests(withCORS(s.blockIP(mux)))
+	return logRequests(withCORS(s.blockIP(s.requireAuth(mux))))
+}
+
+// ---- 只读访问密码 ----
+
+// authToken 有效期 12 小时的无状态会话令牌(hmac 签名)。
+const authTokenTTL = 12 * time.Hour
+
+// validToken 校验会话令牌。
+func (s *Server) validToken(tok string) bool {
+	if s.password == "" || s.authSecret == nil {
+		return false
+	}
+	parts := strings.Split(tok, ".")
+	if len(parts) != 2 {
+		return false
+	}
+	payload, err := base64.RawURLEncoding.DecodeString(parts[0])
+	if err != nil {
+		return false
+	}
+	mac := hmac.New(sha256.New, s.authSecret)
+	mac.Write(payload)
+	if subtle.ConstantTimeCompare([]byte(parts[1]), []byte(base64.RawURLEncoding.EncodeToString(mac.Sum(nil)))) != 1 {
+		return false
+	}
+	var claims struct {
+		Exp int64 `json:"exp"`
+	}
+	if json.Unmarshal(payload, &claims) != nil {
+		return false
+	}
+	return claims.Exp > time.Now().Unix()
+}
+
+// issueToken 签发会话令牌。
+func (s *Server) issueToken() string {
+	payload, _ := json.Marshal(map[string]int64{"exp": time.Now().Add(authTokenTTL).Unix()})
+	mac := hmac.New(sha256.New, s.authSecret)
+	mac.Write(payload)
+	return base64.RawURLEncoding.EncodeToString(payload) + "." + base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
+}
+
+func (s *Server) handleAuthStatus(w http.ResponseWriter, r *http.Request) {
+	authed := false
+	if tok := r.Header.Get("Authorization"); tok != "" {
+		authed = s.validToken(strings.TrimPrefix(tok, "Bearer "))
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"enabled": s.password != "",
+		"authed":  authed,
+	})
+}
+
+func (s *Server) handleAuthLogin(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Password string `json:"password"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeErr(w, http.StatusBadRequest, "请求体格式错误")
+		return
+	}
+	if s.password == "" || subtle.ConstantTimeCompare([]byte(body.Password), []byte(s.password)) != 1 {
+		writeErr(w, http.StatusUnauthorized, "密码错误")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"token": s.issueToken()})
+}
+
+// requireAuth 启用密码时拦截所有 /api/*(auth 与 health 除外)。
+// 静态资源不拦截(前端负责展示登录界面)。
+func (s *Server) requireAuth(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if s.password == "" {
+			next.ServeHTTP(w, r)
+			return
+		}
+		p := r.URL.Path
+		if !strings.HasPrefix(p, "/api/") ||
+			p == "/api/health" || strings.HasPrefix(p, "/api/auth/") {
+			next.ServeHTTP(w, r)
+			return
+		}
+		tok := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
+		if !s.validToken(strings.TrimSpace(tok)) {
+			writeErr(w, http.StatusUnauthorized, "需要访问密码")
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 // ipBlocked 判断请求来源 IP 是否命中黑名单(精确 IP 或 CIDR)。

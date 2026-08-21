@@ -52,6 +52,7 @@ func main() {
 	dataDir := flag.String("data", "data", "数据目录(访问记录存档)")
 	front := flag.String("front", "", "前端静态资源目录(可选, 默认使用内嵌资源)")
 	blacklist := flag.String("blacklist", "", "IP 黑名单, 逗号分隔(精确 IP 或 CIDR, 如 192.168.1.66,10.0.0.0/8)")
+	password := flag.String("password", "", "只读访问密码(留空 = 不启用)")
 	flag.Parse()
 
 	*dir = resolvePath(*dir)
@@ -72,7 +73,7 @@ func main() {
 		}
 	}
 
-	srv, err := api.New(st, *front, api.WebFS, bl)
+	srv, err := api.New(st, *front, api.WebFS, bl, *password)
 	if err != nil {
 		log.Fatalf("初始化失败: %v", err)
 	}
