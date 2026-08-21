@@ -1,0 +1,19 @@
+{
+  "$schema": "https://wails.io/schemas/config.v2.json",
+  "name": "docshare",
+  "outputfilename": "DocShare",
+  "frontend:install": "",
+  "frontend:build": "",
+  "frontend:dev:watcher": "",
+  "frontend:dev:serverUrl": "",
+  "author": {
+    "name": "DocShare"
+  },
+  "info": {
+    "companyName": "DocShare",
+    "productName": "DocShare",
+    "productVersion": "1.0.0",
+    "copyright": "Copyright © DocShare",
+    "comments": "MD 文档中心 - 局域网文档预览与协作编辑"
+  }
+}
