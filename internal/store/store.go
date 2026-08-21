@@ -30,9 +30,10 @@ type Node struct {
 
 // Store 持有文档根目录与数据目录。
 type Store struct {
-	root    string // 文档根目录(绝对路径)
-	dataDir string // 数据目录(编辑申请存档)
-	ready   bool   // 文档目录是否可用
+	root        string // 文档根目录(绝对路径)
+	dataDir     string // 数据目录(访问记录存档)
+	ready       bool   // 文档目录是否可用
+	searchIndex *SearchIndex
 }
 
 // New 创建 Store; 文档目录不存在时进入未配置状态(服务可启动, 目录树为空)。
@@ -41,12 +42,11 @@ func New(root, dataDir string) (*Store, error) {
 	if err != nil {
 		return nil, fmt.Errorf("解析文档目录失败: %w", err)
 	}
-	st := &Store{root: absRoot, dataDir: dataDir}
+	st := &Store{root: absRoot, dataDir: dataDir, searchIndex: newSearchIndex()}
 	if info, err := os.Stat(absRoot); err == nil && info.IsDir() {
 		st.ready = true
 	}
-	reqDir := filepath.Join(dataDir, "requests")
-	if err := os.MkdirAll(reqDir, 0o755); err != nil {
+	if err := os.MkdirAll(dataDir, 0o755); err != nil {
 		return nil, fmt.Errorf("创建数据目录失败: %w", err)
 	}
 	return st, nil

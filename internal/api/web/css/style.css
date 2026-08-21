@@ -328,6 +328,58 @@ body.resizing {
   line-height: 1.8;
 }
 
+/* ---------- 全文搜索结果 ---------- */
+.search-results {
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-sidebar);
+  max-height: 280px;
+  overflow-y: auto;
+  padding: 8px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex-shrink: 0;
+}
+.search-results[hidden] { display: none; }
+.sr-head {
+  font-size: 11px;
+  color: var(--text-3);
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  padding: 2px 6px 6px;
+}
+.sr-item {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 7px 10px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+  transition: background var(--transition);
+}
+.sr-item:hover { background: var(--surface-2); }
+.sr-name { font-size: 12.5px; color: var(--accent); font-weight: 600; }
+.sr-snippet {
+  font-size: 11.5px;
+  color: var(--text-2);
+  line-height: 1.5;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+
+/* 搜索关键词高亮 */
+mark.search-hit {
+  background: var(--warn-soft);
+  color: var(--warn);
+  border-radius: 3px;
+  padding: 0 2px;
+}
+
 /* ---------- 树节点悬浮提示 ---------- */
 .tree-tip {
   position: fixed;

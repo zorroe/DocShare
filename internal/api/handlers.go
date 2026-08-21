@@ -67,6 +67,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/health", s.handleHealth)
 	mux.HandleFunc("GET /api/tree", s.handleTree)
 	mux.HandleFunc("GET /api/doc", s.handleDoc)
+	mux.HandleFunc("GET /api/search", s.handleSearch)
 	mux.HandleFunc("/", s.handleStatic)
 	return logRequests(withCORS(s.blockIP(mux)))
 }
@@ -205,6 +206,28 @@ func clientIP(r *http.Request) string {
 		return h
 	}
 	return r.RemoteAddr
+}
+
+// handleSearch 全文搜索。
+func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
+	q := strings.TrimSpace(r.URL.Query().Get("q"))
+	if q == "" {
+		writeJSON(w, http.StatusOK, []store.SearchResult{})
+		return
+	}
+	if len([]rune(q)) > 100 {
+		writeErr(w, http.StatusBadRequest, "搜索词过长")
+		return
+	}
+	results, err := s.st.Search(q)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "搜索失败: "+err.Error())
+		return
+	}
+	if results == nil {
+		results = []store.SearchResult{}
+	}
+	writeJSON(w, http.StatusOK, results)
 }
 
 // handleStatic 托管前端静态资源, 未命中的路径回退到 index.html(SPA)。

@@ -117,6 +117,35 @@ const EDGE = 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe'
   const searchText = await page.$eval('#tree', (el) => el.textContent);
   check('搜索过滤', searchText.includes('最佳实践') && !searchText.includes('README.md'), '');
 
+  // ---- 3.5 全文搜索 ----
+  await page.$eval('#searchInput', (el) => {
+    el.value = '';
+    el.dispatchEvent(new Event('input', { bubbles: true }));
+  });
+  await new Promise((r) => setTimeout(r, 350));
+  await page.type('#searchInput', '欢迎使用');
+  await page.waitForFunction(() => {
+    const box = document.querySelector('#searchResults');
+    return !box.hidden && box.textContent.includes('欢迎使用');
+  }, { timeout: 8000 });
+  const srText = await page.$eval('#searchResults', (el) => el.textContent);
+  check('全文搜索结果', srText.includes('使用说明') && srText.includes('欢迎使用'), srText.slice(0, 40));
+  // 点击结果 → 打开文档并高亮关键词
+  await page.click('#searchResults .sr-item');
+  await page.waitForFunction(() => document.querySelectorAll('mark.search-hit').length > 0, { timeout: 6000 });
+  const hitCount = await page.$$eval('mark.search-hit', (els) => els.length);
+  check('关键词高亮', hitCount > 0, `hits=${hitCount}`);
+  // 清空搜索 → 结果面板隐藏 + 目录树恢复
+  await page.$eval('#searchInput', (el) => {
+    el.value = '';
+    el.dispatchEvent(new Event('input', { bubbles: true }));
+  });
+  await new Promise((r) => setTimeout(r, 450));
+  const srHidden = await page.$eval('#searchResults', (el) => el.hidden);
+  check('清空搜索隐藏结果', srHidden, '');
+  const treeRestored = await page.$eval('#tree', (el) => el.textContent.includes('README.md'));
+  check('清空后目录树恢复', treeRestored, '');
+
   // ---- 4. 编辑/审批功能已彻底移除 ----
   const editGone = await page.evaluate(() =>
     !document.querySelector('#editBtn') && !document.querySelector('#editMask') &&

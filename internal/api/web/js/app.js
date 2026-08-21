@@ -74,6 +74,7 @@ const els = {
   menuBtn: $('menuBtn'),
   menuPop: $('menuPop'),
   menuThemeLabel: $('menuThemeLabel'),
+  searchResults: $('searchResults'),
   sidebar: document.querySelector('.sidebar'),
   resizer: $('sidebarResizer'),
   docView: $('docView'),
@@ -391,6 +392,67 @@ function renderDoc(doc) {
   renderMd(doc.content, h.querySelector('.md-body'));
   buildToc(h);
 
+  // 全文搜索关键词高亮
+  if (state.search) {
+    highlightTextNodes(h.querySelector('.md-body'), state.search);
+  }
+}
+
+/* ============================================================
+   全文搜索
+   ============================================================ */
+function highlightTextNodes(root, keyword) {
+  if (!root || !keyword) return;
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+  const nodes = [];
+  while (walker.nextNode()) nodes.push(walker.currentNode);
+  const kw = keyword.trim();
+  if (!kw) return;
+  const lower = kw.toLowerCase();
+  nodes.forEach((node) => {
+    const idx = node.textContent.toLowerCase().indexOf(lower);
+    if (idx < 0 || node.parentNode.closest('code, pre, a')) return;
+    const frag = document.createDocumentFragment();
+    frag.appendChild(document.createTextNode(node.textContent.slice(0, idx)));
+    const mark = document.createElement('mark');
+    mark.className = 'search-hit';
+    mark.textContent = node.textContent.slice(idx, idx + kw.length);
+    frag.appendChild(mark);
+    frag.appendChild(document.createTextNode(node.textContent.slice(idx + kw.length)));
+    node.parentNode.replaceChild(frag, node);
+  });
+}
+
+async function doFulltextSearch(q) {
+  const box = els.searchResults;
+  if (!box) return;
+  if (!q) {
+    box.hidden = true;
+    box.innerHTML = '';
+    return;
+  }
+  try {
+    const results = await api('/api/search?q=' + encodeURIComponent(q));
+    if (q !== state.search) return; // 过期响应丢弃
+    if (!results || !results.length) {
+      box.hidden = true;
+      box.innerHTML = '';
+      return;
+    }
+    box.hidden = false;
+    box.innerHTML = `
+      <div class="sr-head">全文匹配 · ${results.length} 篇</div>
+      ${results.map((r) => `
+        <button type="button" class="sr-item" data-path="${esc(r.path)}">
+          <span class="sr-name">${esc(r.name)}</span>
+          <span class="sr-snippet">${esc(r.snippet || '')}</span>
+        </button>`).join('')}`;
+    box.querySelectorAll('.sr-item').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        openDoc(btn.dataset.path, null);
+      });
+    });
+  } catch { /* 搜索失败静默(树过滤仍可用) */ }
 }
 
 /* ============================================================
@@ -684,14 +746,15 @@ async function init() {
   applySidebarWidth();
   bindSidebarResize();
 
-  // 搜索(防抖)
+  // 搜索(防抖): 文件名过滤 + 全文搜索
   let debounce;
   els.search.addEventListener('input', () => {
     clearTimeout(debounce);
-    debounce = setTimeout(() => {
+    debounce = setTimeout(async () => {
       state.search = els.search.value.trim();
       renderTree();
-    }, 160);
+      await doFulltextSearch(state.search);
+    }, 260);
   });
 
   // Ctrl+K 聚焦搜索
