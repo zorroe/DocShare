@@ -1,0 +1,9 @@
+{
+  "name": "docshare-ui-test",
+  "private": true,
+  "version": "1.0.0",
+  "description": "DocShare 前端自动化冒烟测试依赖 (puppeteer-core + 本机 Edge)",
+  "dependencies": {
+    "puppeteer-core": "^23.11.1"
+  }
+}

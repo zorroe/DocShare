@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -34,6 +35,12 @@ type Store struct {
 	dataDir     string // 数据目录(访问记录存档)
 	ready       bool   // 文档目录是否可用
 	searchIndex *SearchIndex
+
+	treeMu    sync.Mutex
+	treeDirty atomic.Bool // 目录变更监听置脏后为 true, 下次 Tree() 重建缓存
+	treeCache *Node       // 目录树缓存(监听生效期间复用, 避免每 3 秒全量扫描)
+	watchMu   sync.Mutex
+	watcher   *dirWatcher // 目录变更监听(Windows); 其余平台为 nil(始终全量扫描)
 }
 
 // New 创建 Store; 文档目录不存在时进入未配置状态(服务可启动, 目录树为空)。
@@ -69,7 +76,45 @@ func (s *Store) SetRoot(root string) error {
 	}
 	s.root = absRoot
 	s.ready = true
+	s.restartWatcher()
 	return nil
+}
+
+// restartWatcher 目录根变化后重启监听并清空树缓存。
+func (s *Store) restartWatcher() {
+	s.watchMu.Lock()
+	if s.watcher != nil {
+		s.watcher.stop()
+		s.watcher = nil
+	}
+	s.watchMu.Unlock()
+	s.treeMu.Lock()
+	s.treeCache = nil
+	s.treeDirty.Store(true)
+	s.treeMu.Unlock()
+}
+
+// ensureWatcher 惰性启动目录变更监听(仅 Windows)。
+func (s *Store) ensureWatcher() {
+	s.watchMu.Lock()
+	defer s.watchMu.Unlock()
+	if s.watcher != nil {
+		return
+	}
+	w := newDirWatcher(s.root, func() { s.treeDirty.Store(true) })
+	if w == nil {
+		return // 非 Windows 平台
+	}
+	w.start()
+	s.watcher = w
+	s.treeDirty.Store(true)
+}
+
+// watcherActive 监听是否生效。
+func (s *Store) watcherActive() bool {
+	s.watchMu.Lock()
+	defer s.watchMu.Unlock()
+	return s.watcher != nil && s.watcher.active()
 }
 
 func isMarkdown(name string) bool {
@@ -110,15 +155,53 @@ func (s *Store) Resolve(rel string) (string, error) {
 }
 
 // Tree 返回文档根目录的目录树(仅包含 Markdown 文件)。
+// 目录变更监听生效时复用缓存: 只有检测到真实变更才重建, 避免高频全量扫描。
 func (s *Store) Tree() (*Node, error) {
+	s.ensureWatcher()
+	if s.watcherActive() {
+		s.treeMu.Lock()
+		if !s.treeDirty.Load() && s.treeCache != nil {
+			c := cloneNode(s.treeCache)
+			s.treeMu.Unlock()
+			return c, nil
+		}
+		s.treeMu.Unlock()
+	}
 	root := &Node{Name: filepath.Base(s.root), Path: ".", IsDir: true}
 	if !s.ready {
+		if s.watcherActive() {
+			s.treeMu.Lock()
+			s.treeCache = root
+			s.treeDirty.Store(false)
+			s.treeMu.Unlock()
+		}
 		return root, nil
 	}
 	if err := s.walk(s.root, root); err != nil {
 		return nil, err
 	}
+	if s.watcherActive() {
+		s.treeMu.Lock()
+		s.treeCache = root
+		s.treeDirty.Store(false)
+		s.treeMu.Unlock()
+	}
 	return root, nil
+}
+
+// cloneNode 深拷贝目录树(调用方可能改写节点路径, 缓存须隔离)。
+func cloneNode(n *Node) *Node {
+	if n == nil {
+		return nil
+	}
+	c := *n
+	if len(n.Children) > 0 {
+		c.Children = make([]*Node, len(n.Children))
+		for i, ch := range n.Children {
+			c.Children[i] = cloneNode(ch)
+		}
+	}
+	return &c
 }
 
 func (s *Store) walk(dir string, node *Node) error {

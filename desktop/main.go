@@ -21,6 +21,7 @@ const singleInstanceMutex = "Local\\DocShare_SingleInstance"
 
 var (
 	trayInst *tray.Tray
+	appInst  *App
 	quitting atomic.Bool
 )
 
@@ -41,6 +42,7 @@ func main() {
 	}
 
 	app := NewApp()
+	appInst = app
 
 	err = wails.Run(&options.App{
 		Title:     "DocShare · MD 文档中心",
@@ -95,5 +97,13 @@ func startTray() {
 		return
 	}
 	trayInst = t
+	trayInst.SetCopyText(appInst.LanURL())
 	log.Printf("托盘已就绪")
+}
+
+// updateTrayCopyText 配置变化后同步托盘"复制访问地址"内容。
+func updateTrayCopyText() {
+	if trayInst != nil && appInst != nil {
+		trayInst.SetCopyText(appInst.LanURL())
+	}
 }

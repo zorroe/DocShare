@@ -1,13 +1,13 @@
 /* DocShare 前端自动化冒烟测试 (puppeteer-core + 本机 Edge) */
 const puppeteer = require('puppeteer-core');
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
 const { spawn } = require('child_process');
 
 const SERVER = process.env.DS_SERVER || path.join(__dirname, '..', 'release', 'DocShare-Server.exe');
 
 const BASE = process.env.DS_BASE || 'http://127.0.0.1:18080';
-const TOKEN = process.env.DS_TOKEN || 'ui-test-token';
 const EDGE = 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe';
 
 (async () => {
@@ -112,6 +112,27 @@ const EDGE = 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe'
   await new Promise((r) => setTimeout(r, 400));
   const printed = await page.evaluate(() => window.__printed);
   check('打印为 PDF 调用', printed === 1, `printed=${printed}`);
+
+  // ---- 2.6.5 快捷键 ----
+  // Ctrl+P 触发打印导出
+  await page.keyboard.down('Control');
+  await page.keyboard.press('p');
+  await page.keyboard.up('Control');
+  await new Promise((r) => setTimeout(r, 300));
+  const printed2 = await page.evaluate(() => window.__printed);
+  check('Ctrl+P 打印', printed2 === 2, `printed=${printed2}`);
+  // Ctrl+K 聚焦搜索框
+  await page.keyboard.down('Control');
+  await page.keyboard.press('k');
+  await page.keyboard.up('Control');
+  const focused = await page.evaluate(() => document.activeElement && document.activeElement.id === 'searchInput');
+  check('Ctrl+K 聚焦搜索', focused, '');
+  // Esc 关闭导出菜单
+  await page.click('#exportBtn');
+  await page.waitForSelector('#exportMenu:not([hidden])');
+  await page.keyboard.press('Escape');
+  const escClosed = await page.$eval('#exportMenu', (el) => el.hidden);
+  check('Esc 关闭弹出层', escClosed, '');
 
   // ---- 2.7 文档互链 ----
   await page.$$eval('.tree-row', (rows) => {
@@ -351,7 +372,7 @@ const EDGE = 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe'
   await page.evaluateOnNewDocument(() => {
     window.__DSH_TEST_DESKTOP = true; // 自动化测试标记: 允许 http 页面模拟桌面模式
     window.go = { main: { App: {
-      ServerInfo: async () => ({ port: 18080, docsDir: 'E:/code/DocShare/docs', docsDirs: ['E:/code/DocShare/docs'], lan: true, running: true, dataDir: 'x', error: '', blacklist: [], password: '', version: '1.1.1' }),
+      ServerInfo: async () => ({ port: Number(location.port || 8080), docsDir: 'E:/code/DocShare/docs', docsDirs: ['E:/code/DocShare/docs'], lan: true, lanUrl: 'http://192.168.1.5:8080', running: true, dataDir: 'x', error: '', blacklist: [], password: '', version: '1.1.1' }),
       ListDir: async (p) => (p ? [{ name: '子目录', path: p + '/sub' }] : [{ name: 'C:\\', path: 'C:\\' }]),
       SaveConfig: async (dirs, p, l, bl, pw) => ({ port: p, docsDirs: dirs, docsDir: dirs[0] || '', lan: l, running: true }),
       OpenBrowser: async () => {},
@@ -369,15 +390,41 @@ const EDGE = 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe'
   // 管理菜单中无审批项(编辑功能已删除)
   const adminItemGone = await page.evaluate(() => !document.querySelector('#menuPop [data-act="admin"]'));
   check('管理菜单无审批项', adminItemGone, '');
+  // 启动静默更新检查: 不点击也会出现新版本徽标
+  await page.waitForFunction(() => !document.querySelector('#updateBadge').hidden, { timeout: 8000 });
+  const badgeText = await page.$eval('#updateBadge', (el) => el.textContent);
+  check('启动静默更新检查(徽标)', badgeText.includes('新版本 v1.1.0'), badgeText);
   // popover 菜单打开设置
   await page.click('#menuBtn');
   await page.waitForSelector('#menuPop:not([hidden])');
   const popVisible = await page.$eval('#menuPop', (el) => !el.hidden);
   check('popover 菜单弹出', popVisible, '');
+  // 主题菜单: 三项 + 跟随系统生效
+  const themeItems = await page.$$eval('#menuPop .theme-item', (els) => els.length);
+  check('主题菜单三项', themeItems === 3, `count=${themeItems}`);
+  await page.click('#menuPop [data-act="theme-auto"]');
+  const themeAuto = await page.evaluate(() => document.documentElement.dataset.theme);
+  check('跟随系统主题生效', themeAuto === 'light' || themeAuto === 'dark', `theme=${themeAuto}`);
+  await page.click('#menuBtn');
+  await page.click('#menuPop [data-act="theme-light"]');
+  const themeLight = await page.evaluate(() => document.documentElement.dataset.theme);
+  check('浅色主题切换', themeLight === 'light', `theme=${themeLight}`);
+  await page.click('#menuBtn');
+  await page.click('#menuPop [data-act="theme-dark"]');
+  const themeDark = await page.evaluate(() => document.documentElement.dataset.theme);
+  check('深色主题切换', themeDark === 'dark', `theme=${themeDark}`);
+  await page.click('#menuBtn');
   await page.click('#menuPop [data-act="settings"]');
   await page.waitForSelector('#settingsMask:not([hidden])');
   const docsDirVal = await page.$eval('#multiDirs', (el) => el.textContent);
   check('设置面板回填配置', docsDirVal.includes('DocShare/docs'), docsDirVal.slice(0, 40));
+  // 访问地址展示 + 复制
+  const lanUrl = await page.$eval('#lanUrlText', (el) => el.textContent);
+  check('访问地址展示', lanUrl === 'http://192.168.1.5:8080', lanUrl);
+  await page.click('#copyUrlBtn');
+  await page.waitForFunction(() => document.getElementById('toast').textContent.includes('已复制'), { timeout: 6000 });
+  const copyTip = await page.$eval('#toast', (el) => el.textContent);
+  check('复制访问地址', copyTip.includes('已复制'), copyTip);
   // 密码输入框: 样式 + 显示/隐藏切换
   const pwdStyled = await page.$eval('#setPassword', (el) => {
     const cs = getComputedStyle(el);
@@ -455,13 +502,24 @@ const EDGE = 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe'
   check('访问记录列表', accessDoc.includes('README.md') && accessIp.includes('192.168.1.5'), `${accessDoc} @ ${accessIp}`);
   await page.click('#accessMask [data-close]');
 
+  // ---- 6.5 启动自动打开上次阅读的文档 ----
+  await page.waitForFunction(() => [...document.querySelectorAll('.tree-row')].some((r) => r.textContent.includes('README.md')), { timeout: 8000 });
+  await page.$$eval('.tree-row', (rows) => {
+    rows.find((r) => r.textContent.includes('README.md')).click();
+  });
+  await page.waitForFunction(() => document.querySelector('#docView .md-body') && document.querySelector('#docView .md-body').textContent.includes('DocShare'), { timeout: 6000 });
+  await page.reload({ waitUntil: 'networkidle0' });
+  await page.waitForFunction(() => document.querySelector('#docView .md-body') && document.querySelector('#docView .md-body').textContent.includes('DocShare'), { timeout: 8000 });
+  check('启动自动打开上次文档', true, '');
+
   // ---- 8. 访问密码登录流程(内嵌启动密码服务, 随机端口避免残留冲突) ----
   const authPort = 18100 + Math.floor(Math.random() * 400);
   const authServer = spawn(SERVER, [
     '-dir', path.join(__dirname, '..', 'docs'),
     '-addr', '127.0.0.1:' + authPort,
-    '-data', path.join(__dirname, '..', 'backend', 'data'),
+    '-data', path.join(os.tmpdir(), 'dshtest-auth-' + Date.now()),
     '-password', 'test-pass',
+    '-lockout', '1', // 1 秒锁定, 便于测试
   ], { stdio: 'ignore', windowsHide: true });
   await new Promise((r) => setTimeout(r, 1500));
   const page2 = await browser.newPage();
@@ -474,12 +532,25 @@ const EDGE = 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe'
   await page2.click('#loginBtn');
   await page2.waitForFunction(() => !document.querySelector('#loginError').hidden, { timeout: 6000 });
   check('错误密码拒绝', true, '');
-  // 正确密码
+  // 连续错 5 次触发锁定: 即使密码正确也被拒绝
+  for (let i = 0; i < 4; i++) {
+    await page2.$eval('#loginPassword', (el) => { el.value = ''; });
+    await page2.type('#loginPassword', 'wrong-pass');
+    await page2.click('#loginBtn');
+    await page2.waitForFunction(() => document.querySelector('#loginError').textContent.includes('密码错误'), { timeout: 6000 });
+  }
+  await page2.$eval('#loginPassword', (el) => { el.value = ''; });
+  await page2.type('#loginPassword', 'test-pass');
+  await page2.click('#loginBtn');
+  await page2.waitForFunction(() => document.querySelector('#loginError').textContent.includes('再试'), { timeout: 6000 });
+  check('连续失败锁定(正确密码也被拒)', true, '');
+  // 锁定期过后恢复
+  await new Promise((r) => setTimeout(r, 1500));
   await page2.$eval('#loginPassword', (el) => { el.value = ''; });
   await page2.type('#loginPassword', 'test-pass');
   await page2.click('#loginBtn');
   await page2.waitForFunction(() => document.querySelector('#tree').textContent.includes('README.md'), { timeout: 10000 });
-  check('正确密码进入', true, '');
+  check('锁定期后正确密码进入', true, '');
   // 刷新免登录(token 记忆)
   await page2.reload({ waitUntil: 'networkidle0' });
   await page2.waitForFunction(() => document.querySelector('#tree').textContent.includes('README.md'), { timeout: 10000 });

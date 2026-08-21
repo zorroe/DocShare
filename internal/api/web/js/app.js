@@ -83,7 +83,6 @@ const els = {
   themeBtn: $('themeBtn'),
   menuBtn: $('menuBtn'),
   menuPop: $('menuPop'),
-  menuThemeLabel: $('menuThemeLabel'),
   searchResults: $('searchResults'),
   loginMask: $('loginMask'),
   loginPassword: $('loginPassword'),
@@ -104,11 +103,14 @@ const els = {
   multiDirs: $('multiDirs'),
   setPort: $('setPort'),
   setLan: $('setLan'),
+  lanUrlText: $('lanUrlText'),
+  copyUrlBtn: $('copyUrlBtn'),
   setAutoStart: $('setAutoStart'),
   setPassword: $('setPassword'),
   pwdToggle: $('pwdToggle'),
   checkUpdateBtn: $('checkUpdateBtn'),
   updateStatus: $('updateStatus'),
+  updateBadge: $('updateBadge'),
   updateMask: $('updateMask'),
   updateVersionInfo: $('updateVersionInfo'),
   updateNotes: $('updateNotes'),
@@ -221,7 +223,9 @@ async function doLogin() {
     els.loginMask.hidden = true;
     els.loginError.hidden = true;
     location.reload(); // 重新初始化
-  } catch {
+  } catch (err) {
+    // 服务端可能返回锁定提示(连续失败过多, 请稍后再试)
+    els.loginError.textContent = err.message || '密码错误，请重试';
     els.loginError.hidden = false;
     els.loginPassword.value = '';
     els.loginPassword.focus();
@@ -329,11 +333,15 @@ function rerenderMermaid() {
   });
 }
 
-// 复制文本(兼容非安全上下文)
+// 复制文本(兼容非安全上下文与剪贴板权限拒绝)
 function copyText(text) {
   if (navigator.clipboard && window.isSecureContext) {
-    return navigator.clipboard.writeText(text);
+    return navigator.clipboard.writeText(text).catch(() => legacyCopy(text));
   }
+  return legacyCopy(text);
+}
+
+function legacyCopy(text) {
   const ta = document.createElement('textarea');
   ta.value = text;
   ta.style.position = 'fixed';
@@ -382,15 +390,38 @@ function renderMd(md, container, basePath) {
 }
 
 /* ============================================================
-   主题
+   主题: dark / light / auto(跟随系统)
    ============================================================ */
+// 当前系统深色偏好(跟随系统时使用)
+const systemDark = () => window.matchMedia('(prefers-color-scheme: dark)').matches;
+
+// 解析实际生效主题(auto → 系统偏好)
+function resolveTheme() {
+  return state.theme === 'auto' ? (systemDark() ? 'dark' : 'light') : state.theme;
+}
+
 function applyTheme() {
-  document.documentElement.dataset.theme = state.theme;
-  els.themeBtn.innerHTML = state.theme === 'dark' ? ICONS.sun : ICONS.moon;
-  els.themeBtn.title = state.theme === 'dark' ? '切换到浅色' : '切换到深色';
-  if (els.menuThemeLabel) {
-    els.menuThemeLabel.textContent = state.theme === 'dark' ? '切换到浅色主题' : '切换到深色主题';
-  }
+  document.documentElement.dataset.theme = resolveTheme();
+  const isDark = resolveTheme() === 'dark';
+  els.themeBtn.innerHTML = isDark ? ICONS.sun : ICONS.moon;
+  els.themeBtn.title = state.theme === 'auto'
+    ? '当前跟随系统（点击切换）'
+    : (isDark ? '切换到浅色' : '切换到深色');
+  // 菜单勾选当前主题项
+  document.querySelectorAll('.theme-item').forEach((item) => {
+    const on = item.dataset.act === 'theme-' + state.theme;
+    item.querySelector('.theme-check').style.display = on ? 'inline' : 'none';
+  });
+}
+
+// 设置主题并联动 Mermaid 重渲染
+function setTheme(t) {
+  if (!['dark', 'light', 'auto'].includes(t)) return;
+  state.theme = t;
+  store.setItem('docshare-theme', t);
+  applyTheme();
+  initMermaid();
+  rerenderMermaid();
 }
 
 /* ============================================================
@@ -418,13 +449,9 @@ function bindMenu() {
       const act = item.dataset.act;
       if (act === 'settings') openSettings();
       else if (act === 'access') openAccess();
-      else if (act === 'theme') {
-        state.theme = state.theme === 'dark' ? 'light' : 'dark';
-        store.setItem('docshare-theme', state.theme);
-        applyTheme();
-        initMermaid();
-        rerenderMermaid();
-      }
+      else if (act === 'theme-dark') setTheme('dark');
+      else if (act === 'theme-light') setTheme('light');
+      else if (act === 'theme-auto') setTheme('auto');
       closeMenu();
     });
   });
@@ -592,6 +619,35 @@ ${bodyHtml}
 function exportPDF() {
   if (!state.currentDoc) return;
   window.print(); // 用户可在打印对话框中选择"另存为 PDF"
+}
+
+// 全局快捷键: Ctrl+K 搜索 / Ctrl+P 打印导出 / Esc 关闭弹窗
+function bindShortcuts() {
+  document.addEventListener('keydown', (e) => {
+    const mod = e.ctrlKey || e.metaKey;
+    const key = (e.key || '').toLowerCase();
+    if (mod && key === 'k') {
+      e.preventDefault();
+      els.search.focus();
+      els.search.select();
+      return;
+    }
+    if (mod && key === 'p') {
+      e.preventDefault();
+      exportPDF();
+      return;
+    }
+    if (e.key === 'Escape') {
+      // 登录遮罩不允许 Esc 关闭(必须输入密码或刷新)
+      if (els.loginMask && !els.loginMask.hidden) return;
+      ['updateMask', 'dirMask', 'settingsMask', 'accessMask'].forEach((id) => {
+        const el = document.getElementById(id);
+        if (el && !el.hidden) el.hidden = true;
+      });
+      if (!els.exportMenu.hidden) els.exportMenu.hidden = true;
+      els.search.blur();
+    }
+  });
 }
 
 function bindExport() {
@@ -1165,6 +1221,7 @@ async function openSettings() {
     els.setDocsDir.value = '';
     els.setPort.value = info.port || 8080;
     els.setLan.checked = !!info.lan;
+    els.lanUrlText.textContent = info.lanUrl || '';
     els.setBlacklist.value = (info.blacklist || []).join('\n');
     els.setPassword.value = info.password || '';
     // 版本号由后端下发(设置面板初始显示)
@@ -1251,6 +1308,18 @@ async function loadAccess() {
 /* ---- 软件更新检查与一键更新 ---- */
 let lastUpdateInfo = null; // 最近一次检查的更新信息(含更新说明)
 let pendingInstaller = ''; // 已下载待安装的安装包路径
+
+// 启动静默检查: 发现新版本只显示徽标, 不打扰; 点击徽标转为完整检查
+async function silentUpdateCheck() {
+  try {
+    const info = await window.go.main.App.CheckUpdate();
+    lastUpdateInfo = info;
+    if (info.hasUpdate) {
+      els.updateBadge.textContent = `新版本 v${info.latest}`;
+      els.updateBadge.hidden = false;
+    }
+  } catch { /* 网络不可用等: 静默忽略 */ }
+}
 
 async function checkUpdate() {
   els.checkUpdateBtn.disabled = true;
@@ -1371,11 +1440,18 @@ async function init() {
   bindDocNav();
 
   els.themeBtn.addEventListener('click', () => {
-    state.theme = state.theme === 'dark' ? 'light' : 'dark';
-    store.setItem('docshare-theme', state.theme);
-    applyTheme();
-    initMermaid();
-    rerenderMermaid();
+    // 循环: 深色 → 浅色 → 跟随系统 → 深色
+    const next = state.theme === 'dark' ? 'light' : state.theme === 'light' ? 'auto' : 'dark';
+    setTheme(next);
+  });
+
+  // 跟随系统: 系统主题切换时自动联动
+  window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {
+    if (state.theme === 'auto') {
+      applyTheme();
+      initMermaid();
+      rerenderMermaid();
+    }
   });
 
 
@@ -1409,6 +1485,14 @@ async function init() {
     els.setAutoStart.addEventListener('change', toggleAutoStart);
     els.accessRefresh.addEventListener('click', loadAccess);
     els.checkUpdateBtn.addEventListener('click', checkUpdate);
+    // 启动静默检查: 有新版本时徽标提示
+    setTimeout(silentUpdateCheck, 2500);
+    els.updateBadge.addEventListener('click', checkUpdate);
+    els.copyUrlBtn.addEventListener('click', () => {
+      const url = (els.lanUrlText.textContent || '').trim();
+      if (!url) { toast('暂无可复制的访问地址', 'err'); return; }
+      copyText(url).then(() => toast(`访问地址已复制：${url}`));
+    });
     els.updateLaterBtn.addEventListener('click', () => {
       els.updateMask.hidden = true;
       pendingInstaller = '';
@@ -1446,14 +1530,8 @@ async function init() {
     }, 260);
   });
 
-  // Ctrl+K 聚焦搜索
-  document.addEventListener('keydown', (e) => {
-    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
-      e.preventDefault();
-      els.search.focus();
-      els.search.select();
-    }
-  });
+  // 全局快捷键: Ctrl+K 搜索 / Ctrl+P 打印 / Esc 关闭弹窗
+  bindShortcuts();
 
   // 桌面端: 获取服务信息; 壳页(wails://)下 API 走绝对地址
   if (DESKTOP) {
@@ -1480,6 +1558,13 @@ async function init() {
     state.ready = !!data.ready;
     state.treeSig = JSON.stringify(state.tree);
     renderTree();
+    // 桌面端: 自动打开上次阅读的文档(章节位置随记忆恢复)
+    if (DESKTOP && state.recent.length && !state.currentDoc) {
+      const last = state.recent[0];
+      if (findTreeNode(state.tree, last.path)) {
+        openDoc(last.path, null);
+      }
+    }
   } catch (err) {
     els.tree.innerHTML = DESKTOP
       ? `<div class="tree-empty">本地服务不可用（${esc(err.message)}）<br/><span style="font-size:12px;opacity:.75">请打开「设置」检查服务状态</span></div>`

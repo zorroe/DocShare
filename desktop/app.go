@@ -163,6 +163,17 @@ func (a *App) stopServer() {
 
 // ---- 前端绑定方法 ----
 
+// LanURL 当前访问地址(局域网开启时取本机 IP, 否则回退本机地址)。
+func (a *App) LanURL() string {
+	url := fmt.Sprintf("http://127.0.0.1:%d", a.cfg.Port)
+	if a.cfg.LAN {
+		if ips := api.LanIPs(); len(ips) > 0 {
+			url = fmt.Sprintf("http://%s:%d", ips[0], a.cfg.Port)
+		}
+	}
+	return url
+}
+
 // ServerInfo 返回当前服务状态。
 func (a *App) ServerInfo() map[string]any {
 	return map[string]any{
@@ -170,6 +181,7 @@ func (a *App) ServerInfo() map[string]any {
 		"docsDir":   a.cfg.DocsDir,
 		"docsDirs":  a.cfg.GetDocsDirs(),
 		"lan":       a.cfg.LAN,
+		"lanUrl":    a.LanURL(), // 局域网访问地址(复制/托盘菜单用)
 		"running":   a.started,
 		"dataDir":   a.dataDir,
 		"error":     a.errMsg,
@@ -261,6 +273,7 @@ func (a *App) SaveConfig(docsDirs []string, port int, lan bool, blacklist []stri
 		a.errMsg = err.Error()
 		return a.ServerInfo(), err
 	}
+	updateTrayCopyText() // 配置变化后同步托盘菜单的访问地址
 	return a.ServerInfo(), nil
 }
 
@@ -299,7 +312,7 @@ func (a *App) ListAccessLogs() []store.AccessRecord {
 
 // ---- 自动更新 ----
 
-const appVersion = "1.1.9"
+const appVersion = "1.2.0"
 
 // UpdateInfo 更新检查结果。
 type UpdateInfo struct {

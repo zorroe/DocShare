@@ -11,3 +11,5 @@ desktop/build/
 # ===== 临时文件 =====
 test/tools/
 release.zip
+test/.server.pid
+test/node_modules/

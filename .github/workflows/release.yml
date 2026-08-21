@@ -1,0 +1,74 @@
+# ============================================================
+#  自动发布: 推送 v* 标签时
+#   1. 版本一致性检查 + Go 单元测试 + UI 冒烟测试
+#   2. 构建三件套(便携版/安装版/CLI 服务端)
+#   3. 创建 GitHub Release 并上传产物
+#  用法: git tag v1.2.0 && git push origin v1.2.0
+# ============================================================
+name: release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    runs-on: windows-latest
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 安装 Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.22.x'
+          cache: true
+
+      - name: 安装 Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: 版本一致性检查
+        shell: pwsh
+        run: ./tools/check-version.ps1
+
+      - name: Go 单元测试
+        shell: pwsh
+        run: go test ./...
+
+      - name: 安装 NSIS
+        shell: pwsh
+        run: choco install nsis -y --no-progress
+
+      - name: 安装 Wails CLI
+        shell: pwsh
+        run: go install github.com/wailsapp/wails/v2/cmd/wails@v2.15.0
+
+      - name: UI 冒烟测试(Edge + puppeteer-core)
+        shell: pwsh
+        run: ./test/run.ps1
+
+      - name: 构建桌面产物(便携版 + 安装版)
+        shell: pwsh
+        run: ./build_desktop.ps1
+
+      - name: 构建 CLI 服务端
+        shell: pwsh
+        run: go build -ldflags "-s -w" -o release/DocShare-Server.exe ./backend
+
+      - name: 创建 Release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $tag = "${{ github.ref_name }}"
+          $prev = git tag --sort=-creatordate | Select-Object -Skip 1 -First 1
+          $log = if ($prev) { git log --oneline "$prev..HEAD" | ForEach-Object { "- $_" } } else { "- 首次发布" }
+          $notes = "## DocShare $tag`n`n### 本次变更`n`n$log"
+          gh release create $tag --title "DocShare $tag" --notes $notes `
+            release/DocShare-Setup.exe release/DocShare.exe release/DocShare-Server.exe

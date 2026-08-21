@@ -54,6 +54,7 @@ func main() {
 	front := flag.String("front", "", "前端静态资源目录(可选, 默认使用内嵌资源)")
 	blacklist := flag.String("blacklist", "", "IP 黑名单, 逗号分隔(精确 IP 或 CIDR, 如 192.168.1.66,10.0.0.0/8)")
 	password := flag.String("password", "", "只读访问密码(留空 = 不启用)")
+	lockout := flag.Int("lockout", 30, "密码连续失败锁定秒数(0 = 不锁定)")
 	flag.Parse()
 
 	*dataDir = resolvePath(*dataDir)
@@ -91,6 +92,9 @@ func main() {
 	srv, err := api.NewMulti(stores, *front, api.WebFS, bl, *password)
 	if err != nil {
 		log.Fatalf("初始化失败: %v", err)
+	}
+	if *lockout > 0 {
+		srv.SetLockSeconds(*lockout)
 	}
 
 	httpSrv := &http.Server{

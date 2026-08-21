@@ -9,6 +9,12 @@ $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent $MyInvocation.MyCommand.Path
 Set-Location $root
 
+# 0. 版本一致性校验(发布前必查)
+& "$root\tools\check-version.ps1"
+if ($LASTEXITCODE -ne 0) { exit 1 }
+# 清理构建残留(中断的 go build 可能留下 *.exe~)
+Remove-Item "$root\release\*.exe~" -ErrorAction SilentlyContinue
+
 # 1. 检查 Go
 $go = Get-Command go -ErrorAction SilentlyContinue
 if (-not $go) {

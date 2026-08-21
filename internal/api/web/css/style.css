@@ -197,6 +197,12 @@ body.resizing {
 }
 .menu-item:hover { background: var(--surface-2); color: var(--text); }
 .menu-item svg { width: 16px; height: 16px; flex-shrink: 0; }
+.menu-item .theme-check {
+  margin-left: auto;
+  color: var(--accent);
+  font-weight: 700;
+  display: none;
+}
 .menu-sep { height: 1px; background: var(--border); margin: 5px 8px; }
 
 .brand {
@@ -953,6 +959,38 @@ mark.search-hit {
 .update-body .md-body { font-size: 13.5px; line-height: 1.7; }
 .update-body .md-body h1 { font-size: 1.35em; }
 .update-body .md-body h2 { font-size: 1.2em; }
+
+/* 访问地址展示 */
+.lan-url {
+  flex: 1;
+  min-width: 0;
+  font-family: Consolas, Menlo, monospace;
+  font-size: 13px;
+  color: var(--accent);
+  background: color-mix(in srgb, var(--surface-2) 60%, transparent);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-s);
+  padding: 8px 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  user-select: all;
+}
+
+/* 新版本徽标(启动静默检查发现更新后显示) */
+.update-badge {
+  flex-shrink: 0;
+  font-size: 12px;
+  font-weight: 600;
+  color: #fff;
+  background: var(--accent);
+  border-radius: 999px;
+  padding: 5px 12px;
+  cursor: pointer;
+  animation: maskIn 200ms ease;
+}
+.update-badge:hover { filter: brightness(1.12); }
+.update-badge[hidden] { display: none; }
 
 /* 选项卡 */
 .tabs {

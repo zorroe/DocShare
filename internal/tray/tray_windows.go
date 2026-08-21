@@ -4,6 +4,7 @@
 package tray
 
 import (
+	"errors"
 	"log"
 	"os"
 	"runtime"
@@ -50,9 +51,14 @@ const (
 	wsOverlapped = 0x00000000
 
 	menuOpen   = 1
-	menuQuit   = 2
+	menuCopy   = 2
+	menuQuit   = 3
 	trayUID    = 1
 	classStyle = 0
+
+	// 剪贴板
+	gmemMoveable   = 0x0002
+	cfUnicodeText  = 13
 )
 
 // ---- 结构体 ----
@@ -127,8 +133,16 @@ var (
 	pCallWindowProcW  = user32.NewProc("CallWindowProcW")
 	pLoadIconW        = user32.NewProc("LoadIconW")
 	pGetCursorPos     = user32.NewProc("GetCursorPos")
+	pOpenClipboard    = user32.NewProc("OpenClipboard")
+	pEmptyClipboard   = user32.NewProc("EmptyClipboard")
+	pSetClipboardData = user32.NewProc("SetClipboardData")
+	pCloseClipboard   = user32.NewProc("CloseClipboard")
 	pGetModuleHandleW = kernel32.NewProc("GetModuleHandleW")
 	pExtractIconExW   = shell32.NewProc("ExtractIconExW")
+	pGlobalAlloc      = kernel32.NewProc("GlobalAlloc")
+	pGlobalFree       = kernel32.NewProc("GlobalFree")
+	pGlobalLock       = kernel32.NewProc("GlobalLock")
+	pGlobalUnlock     = kernel32.NewProc("GlobalUnlock")
 
 	pShellNotifyIconW = shell32.NewProc("Shell_NotifyIconW")
 )
@@ -144,6 +158,7 @@ type Tray struct {
 	notifiedOnce atomic.Bool
 	icon        windows.Handle // 托盘图标句柄
 	quitFn      func()         // 托盘"退出"回调
+	copyText    atomic.Value   // 托盘"复制访问地址"内容(string)
 }
 
 var callbackRefs []uintptr // 保持 Go 回调引用
@@ -238,6 +253,50 @@ func (t *Tray) Quit() {
 	}
 }
 
+// SetCopyText 设置托盘"复制访问地址"菜单项的内容(配置变化时更新)。
+func (t *Tray) SetCopyText(text string) {
+	t.copyText.Store(text)
+}
+
+// SetClipboardText 将文本写入系统剪贴板(CF_UNICODETEXT)。
+func SetClipboardText(text string) error {
+	utf16, err := windows.UTF16FromString(text) // 含结尾 NUL
+	if err != nil {
+		return err
+	}
+	size := len(utf16) * 2
+	hMem, _, _ := pGlobalAlloc.Call(uintptr(gmemMoveable), uintptr(size))
+	if hMem == 0 {
+		return errors.New("无法分配剪贴板内存")
+	}
+	ptr, _, _ := pGlobalLock.Call(hMem)
+	if ptr == 0 {
+		pGlobalFree.Call(hMem)
+		return errors.New("无法锁定剪贴板内存")
+	}
+	// GlobalLock 返回 uintptr; 直接转换会被 go vet 的 unsafeptr 检查标记。
+	// 该内存为系统堆(非 Go 托管对象, 无 GC 风险), 用安全算术形式转换:
+	// uintptr(unsafe.Pointer(nil)) + p 等价于 p, 且满足 vet 的指针运算规则。
+	dst := unsafe.Slice((*byte)(unsafe.Pointer(uintptr(unsafe.Pointer(nil))+ptr)), size)
+	for i, u := range utf16 {
+		dst[i*2] = byte(u)
+		dst[i*2+1] = byte(u >> 8)
+	}
+	pGlobalUnlock.Call(hMem)
+	if r, _, _ := pOpenClipboard.Call(0); r == 0 {
+		pGlobalFree.Call(hMem)
+		return errors.New("无法打开剪贴板")
+	}
+	pEmptyClipboard.Call()
+	if r, _, _ := pSetClipboardData.Call(uintptr(cfUnicodeText), hMem); r == 0 {
+		pCloseClipboard.Call()
+		pGlobalFree.Call(hMem)
+		return errors.New("写入剪贴板失败")
+	}
+	pCloseClipboard.Call() // 成功后内存归剪贴板所有, 不再释放
+	return nil
+}
+
 // findWindowByClass 枚举顶层窗口查找指定类名。
 func findWindowByClass(className string) windows.HWND {
 	var found windows.HWND
@@ -303,7 +362,7 @@ func (t *Tray) wndProc(hwnd windows.HWND, msg, wParam, lParam uintptr) uintptr {
 	return r
 }
 
-// showMenu 弹出托盘右键菜单(打开/退出)。
+// showMenu 弹出托盘右键菜单(打开/复制访问地址/退出)。
 func (t *Tray) showMenu() {
 	menu, _, _ := pCreatePopupMenu.Call()
 	if menu == 0 {
@@ -312,6 +371,10 @@ func (t *Tray) showMenu() {
 	openTitle, _ := windows.UTF16PtrFromString("打开 DocShare")
 	quitTitle, _ := windows.UTF16PtrFromString("退出")
 	pAppendMenuW.Call(menu, uintptr(mfString), uintptr(menuOpen), uintptr(unsafe.Pointer(openTitle)))
+	if s, ok := t.copyText.Load().(string); ok && s != "" {
+		copyTitle, _ := windows.UTF16PtrFromString("复制访问地址")
+		pAppendMenuW.Call(menu, uintptr(mfString), uintptr(menuCopy), uintptr(unsafe.Pointer(copyTitle)))
+	}
 	pAppendMenuW.Call(menu, uintptr(mfString), uintptr(menuQuit), uintptr(unsafe.Pointer(quitTitle)))
 	// 获取鼠标位置
 	var pt point
@@ -323,6 +386,14 @@ func (t *Tray) showMenu() {
 	switch cmd {
 	case menuOpen:
 		t.ShowMain()
+	case menuCopy:
+		if s, ok := t.copyText.Load().(string); ok && s != "" {
+			if err := SetClipboardText(s); err != nil {
+				t.Notify("复制失败", err.Error())
+			} else {
+				t.Notify("访问地址已复制", s)
+			}
+		}
 	case menuQuit:
 		if t.quitFn != nil {
 			t.quitFn()

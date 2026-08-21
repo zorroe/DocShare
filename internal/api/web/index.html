@@ -48,9 +48,17 @@
             访问记录
           </button>
           <div class="menu-sep" hidden></div>
-          <button class="menu-item" type="button" data-act="theme">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>
-            <span id="menuThemeLabel">切换主题</span>
+          <button class="menu-item theme-item" type="button" data-act="theme-dark">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+            深色主题<span class="theme-check">✓</span>
+          </button>
+          <button class="menu-item theme-item" type="button" data-act="theme-light">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg>
+            浅色主题<span class="theme-check">✓</span>
+          </button>
+          <button class="menu-item theme-item" type="button" data-act="theme-auto">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+            跟随系统<span class="theme-check">✓</span>
           </button>
         </div>
         <button id="themeBtn" class="icon-btn" type="button" title="切换主题" aria-label="切换主题"></button>
@@ -117,6 +125,14 @@
           <p class="form-hint">局域网设备通过 http://&lt;本机IP&gt;:端口 访问。</p>
         </div>
         <div class="form-item">
+          <label>访问地址</label>
+          <div class="dir-row">
+            <span id="lanUrlText" class="lan-url"></span>
+            <button id="copyUrlBtn" class="btn ghost" type="button">复制地址</button>
+          </div>
+          <p class="form-hint">将地址发给同事, 浏览器打开即可浏览文档库(启用访问密码后需输入密码)。</p>
+        </div>
+        <div class="form-item">
           <label class="check-row">
             <input id="setLan" type="checkbox" checked />
             <span>允许局域网访问</span>
@@ -145,8 +161,9 @@
           <div class="dir-row">
             <span id="updateStatus" class="update-status">当前版本 <code>—</code></span>
             <button id="checkUpdateBtn" class="btn ghost" type="button">检查更新</button>
+            <span id="updateBadge" class="update-badge" hidden title="点击查看更新内容并下载"></span>
           </div>
-          <p class="form-hint">从 GitHub Release 检查最新版本（需要网络连接）。</p>
+          <p class="form-hint">启动时自动检查最新版本；发现新版本时此处显示提示（需要网络连接）。</p>
         </div>
         <div class="form-item">
           <label for="setBlacklist">IP 黑名单</label>

@@ -9,6 +9,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"io/fs"
 	"log"
@@ -18,6 +19,7 @@ import (
 	"path"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"docshare/internal/store"
@@ -31,6 +33,20 @@ type Server struct {
 	blacklist  []string       // IP 黑名单(精确 IP 或 CIDR)
 	password   string         // 只读访问密码(空 = 不启用)
 	authSecret []byte         // 会话令牌签名密钥
+
+	lockMu   sync.Mutex              // 登录失败锁定
+	lockFails map[string]*loginLock  // IP -> 失败计数/锁定期
+	lockSec  int                     // 连续失败 N 次后锁定秒数(0 = 不锁定)
+}
+
+const (
+	loginMaxFails = 5  // 连续失败次数阈值
+	loginLockSec  = 30 // 默认锁定时长(秒)
+)
+
+type loginLock struct {
+	count int
+	until time.Time
 }
 
 // New 创建单根 Server(兼容旧签名)。
@@ -44,7 +60,7 @@ func NewMulti(stores []*store.Store, frontDir string, webFS fs.FS, blacklist []s
 	if len(stores) == 0 {
 		return nil, errors.New("至少需要一个文档存储")
 	}
-	s := &Server{stores: stores, webFS: webFS, password: password}
+	s := &Server{stores: stores, webFS: webFS, password: password, lockFails: map[string]*loginLock{}, lockSec: loginLockSec}
 	if s.password != "" {
 		b := make([]byte, 16)
 		if _, err := rand.Read(b); err != nil {
@@ -85,6 +101,14 @@ func NewMulti(stores []*store.Store, frontDir string, webFS fs.FS, blacklist []s
 
 // multiRoot 是否多根模式(树中显示根节点层级)。
 func (s *Server) multiRoot() bool { return len(s.stores) > 1 }
+
+// SetLockSeconds 设置登录失败锁定秒数(0 = 不锁定)。供 CLI 参数与测试使用。
+func (s *Server) SetLockSeconds(sec int) {
+	s.lockMu.Lock()
+	s.lockSec = sec
+	s.lockFails = map[string]*loginLock{}
+	s.lockMu.Unlock()
+}
 
 // rootName 返回 store 的逻辑根名(目录 basename)。
 func rootName(st *store.Store) string {
@@ -293,11 +317,58 @@ func (s *Server) handleAuthLogin(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "请求体格式错误")
 		return
 	}
+	ip := clientIP(r)
+	if secs := s.lockRemain(ip); secs > 0 {
+		writeErr(w, http.StatusTooManyRequests, fmt.Sprintf("密码错误次数过多，请 %d 秒后再试", secs))
+		return
+	}
 	if s.password == "" || subtle.ConstantTimeCompare([]byte(body.Password), []byte(s.password)) != 1 {
+		s.recordFail(ip)
 		writeErr(w, http.StatusUnauthorized, "密码错误")
 		return
 	}
+	s.clearFail(ip)
 	writeJSON(w, http.StatusOK, map[string]string{"token": s.issueToken()})
+}
+
+// recordFail 记录一次登录失败; 达到阈值后锁定该 IP。
+func (s *Server) recordFail(ip string) {
+	if s.lockSec <= 0 {
+		return
+	}
+	s.lockMu.Lock()
+	defer s.lockMu.Unlock()
+	l := s.lockFails[ip]
+	if l == nil {
+		l = &loginLock{}
+		s.lockFails[ip] = l
+	}
+	l.count++
+	if l.count >= loginMaxFails {
+		l.until = time.Now().Add(time.Duration(s.lockSec) * time.Second)
+	}
+}
+
+// clearFail 登录成功后清除该 IP 的失败记录。
+func (s *Server) clearFail(ip string) {
+	s.lockMu.Lock()
+	delete(s.lockFails, ip)
+	s.lockMu.Unlock()
+}
+
+// lockRemain 返回该 IP 剩余锁定秒数(0 = 未锁定)。
+func (s *Server) lockRemain(ip string) int {
+	s.lockMu.Lock()
+	defer s.lockMu.Unlock()
+	l := s.lockFails[ip]
+	if l == nil || l.until.IsZero() {
+		return 0 // 无记录或尚未触发锁定, 不清除计数
+	}
+	if l.until.After(time.Now()) {
+		return int(time.Until(l.until).Seconds()) + 1
+	}
+	delete(s.lockFails, ip) // 锁定期已过, 自动解除
+	return 0
 }
 
 // requireAuth 启用密码时拦截所有 /api/*(auth 与 health 除外)。
