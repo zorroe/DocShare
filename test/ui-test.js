@@ -92,6 +92,26 @@ const EDGE = 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe'
   const copyLabel = await page.$eval('#docView .md-body pre .copy-btn', (el) => el.textContent);
   check('复制按钮反馈', copyLabel === '已复制', copyLabel);
 
+  // ---- 2.5 文档导出 ----
+  const exportEnabled = await page.$eval('#exportBtn', (el) => !el.disabled);
+  check('导出按钮可用', exportEnabled, '');
+  // 导出 HTML 文件(通过测试钩子验证生成内容)
+  await page.click('#exportBtn');
+  await page.waitForSelector('#exportMenu:not([hidden])');
+  await new Promise((r) => setTimeout(r, 300)); // 等待弹出动画结束
+  await page.click('#exportMenu [data-act="html"]');
+  await page.waitForFunction(() => window.__DSH_LAST_EXPORT && window.__DSH_LAST_EXPORT.includes('<!DOCTYPE html>'), { timeout: 6000 });
+  const dlContent = await page.evaluate(() => window.__DSH_LAST_EXPORT);
+  check('导出 HTML 文件', dlContent.includes('<!DOCTYPE html>') && dlContent.includes('DocShare') && dlContent.includes('title'), `len=${dlContent.length}`);
+  // 导出 PDF(打印): mock window.print
+  await page.evaluate(() => { window.__printed = 0; window.print = () => { window.__printed++; }; });
+  await page.click('#exportBtn');
+  await new Promise((r) => setTimeout(r, 300)); // 等待弹出动画结束
+  await page.click('#exportMenu [data-act="pdf"]');
+  await new Promise((r) => setTimeout(r, 400));
+  const printed = await page.evaluate(() => window.__printed);
+  check('打印为 PDF 调用', printed === 1, `printed=${printed}`);
+
   // ---- 2.5 大纲视图 ----
   await page.waitForSelector('.toc-panel', { timeout: 4000 });
   const tocText = await page.$eval('.toc-panel', (el) => el.textContent);

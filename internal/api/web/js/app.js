@@ -83,6 +83,8 @@ const els = {
   loginPassword: $('loginPassword'),
   loginError: $('loginError'),
   loginBtn: $('loginBtn'),
+  exportBtn: $('exportBtn'),
+  exportMenu: $('exportMenu'),
   sidebar: document.querySelector('.sidebar'),
   resizer: $('sidebarResizer'),
   docView: $('docView'),
@@ -441,6 +443,88 @@ function bindTreeTip(row, path) {
 }
 
 /* ============================================================
+   文档导出
+   ============================================================ */
+// 导出用内嵌样式(独立 HTML 文件可离线打开)
+const EXPORT_CSS = `
+  body{font-family:-apple-system,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;color:#24292f;line-height:1.75;max-width:880px;margin:0 auto;padding:32px 24px}
+  h1{font-size:1.8em;border-bottom:1px solid #d8dee4;padding-bottom:.35em}h2{border-bottom:1px solid #d8dee4;padding-bottom:.3em}
+  code{font-family:Consolas,Menlo,monospace;background:#f0f2f5;padding:2px 5px;border-radius:4px;font-size:.9em}
+  pre{background:#f6f8fa;border:1px solid #d8dee4;border-radius:8px;padding:14px;overflow-x:auto}
+  pre code{background:none;padding:0}
+  blockquote{border-left:3px solid #6d7cff;background:#f4f5ff;margin:1em 0;padding:8px 16px;color:#57606a}
+  table{border-collapse:collapse;width:100%;margin:1em 0}
+  th,td{border:1px solid #d8dee4;padding:7px 13px;text-align:left}
+  th{background:#f0f2f5}
+  img{max-width:100%}
+  .mermaid{background:#fff;border:1px solid #d8dee4;border-radius:8px;padding:12px;text-align:center;margin:1em 0}
+  .mermaid svg{max-width:100%;height:auto}
+`;
+
+// 干净渲染一份正文(去除搜索高亮等交互元素)
+function buildExportBody(doc) {
+  const wrap = document.createElement('div');
+  renderMd(doc.content, wrap);
+  return wrap.innerHTML;
+}
+
+function exportHTML() {
+  const doc = state.currentDoc;
+  if (!doc) return;
+  const title = doc.name.replace(/\.(md|markdown)$/i, '');
+  const html = `<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>${esc(title)}</title>
+<style>${EXPORT_CSS}</style>
+</head>
+<body>
+<h1>${esc(title)}</h1>
+<div class="doc-meta" style="color:#8a93a3;font-size:.85em;margin-bottom:24px">来源: DocShare · ${esc(fmtTime(doc.modified))}</div>
+${buildExportBody(doc)}
+</body>
+</html>`;
+  const blob = new Blob([html], { type: 'text/html;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = title + '.html';
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 2000);
+  window.__DSH_LAST_EXPORT = html; // 测试钩子
+  toast('已导出 ' + title + '.html');
+}
+
+function exportPDF() {
+  if (!state.currentDoc) return;
+  window.print(); // 用户可在打印对话框中选择"另存为 PDF"
+}
+
+function bindExport() {
+  els.exportBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    els.exportMenu.hidden = !els.exportMenu.hidden;
+  });
+  els.exportMenu.querySelectorAll('.export-item').forEach((item) => {
+    item.addEventListener('click', () => {
+      const act = item.dataset.act;
+      if (act === 'html') exportHTML();
+      else if (act === 'pdf') exportPDF();
+      els.exportMenu.hidden = true;
+    });
+  });
+  document.addEventListener('click', (e) => {
+    if (!els.exportMenu.hidden && !els.exportMenu.contains(e.target) && e.target !== els.exportBtn) {
+      els.exportMenu.hidden = true;
+    }
+  });
+}
+
+/* ============================================================
    目录树
    ============================================================ */
 function renderTree() {
@@ -475,6 +559,11 @@ function renderTree() {
     const row = els.tree.querySelector(`.tree-row[data-path="${CSS.escape(state.currentDoc.path)}"]`);
     if (row) row.classList.add('active');
   }
+}
+
+// renderDoc 中启用导出按钮
+function enableExport() {
+  els.exportBtn.disabled = false;
 }
 
 function buildNode(node) {
@@ -582,6 +671,7 @@ function renderDoc(doc) {
   if (state.search) {
     highlightTextNodes(h.querySelector('.md-body'), state.search);
   }
+  els.exportBtn.disabled = false;
 }
 
 /* ============================================================
@@ -896,6 +986,7 @@ async function init() {
   initMermaid();
   bindModals();
   createTocFab();
+  bindExport();
 
   els.themeBtn.addEventListener('click', () => {
     state.theme = state.theme === 'dark' ? 'light' : 'dark';
