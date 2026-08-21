@@ -72,6 +72,7 @@ const state = {
   docsDirs: [],
   recent: (() => { try { return JSON.parse(store.getItem('docshare-recent') || '[]'); } catch { return []; } })(),
   scrollTimer: null,
+  userScrolled: false, // 用户是否已主动滚动(自动恢复位置时让位)
 };
 
 /* ---------- DOM 引用 ---------- */
@@ -717,6 +718,8 @@ function clearRecent() {
 
 function restoreScroll() {
   if (!state.currentDoc) return;
+  // 用户已主动滚动过: 以用户当前位置为准, 不再自动恢复(防止覆盖)
+  if (state.userScrolled) return;
   const raw = store.getItem('docshare-scroll-' + state.currentDoc.path);
   if (!raw) return;
   let pos;
@@ -728,21 +731,24 @@ function restoreScroll() {
   }
   const view = els.docView;
   if (!view.scrollHeight) return;
+  // 计算最终目标位置(单次赋值, 只产生一次滚动事件)
+  let target = null;
   // 1) 快速恢复: 直接按上次像素位置(内容未变化时一步到位)
-  if (pos.top > 0 && pos.top < view.scrollHeight) view.scrollTop = pos.top;
+  if (pos.top > 0 && pos.top < view.scrollHeight) target = pos.top;
   // 2) 章节锚点校正: 找到上次所在的标题, 按其位置 + 段内偏移恢复(文档被编辑过也能定位)
   if (pos.heading) {
     const heads = [...view.querySelectorAll('.md-body h1, .md-body h2, .md-body h3, .md-body h4, .md-body h5, .md-body h6')];
-    const target = heads.find((h) => h.textContent.trim() === pos.heading);
-    if (target) {
-      view.scrollTop = Math.max(0, Math.round(posInView(target) + (pos.delta || 0)));
-      return;
-    }
+    const found = heads.find((h) => h.textContent.trim() === pos.heading);
+    if (found) target = Math.max(0, Math.round(posInView(found) + (pos.delta || 0)));
+  } else if (pos.ratio > 0) {
+    // 3) 兜底: 按阅读比例恢复(标题找不到或内容大幅变化)
+    target = Math.round(pos.ratio * view.scrollHeight);
   }
-  // 3) 兜底: 按阅读比例恢复(标题找不到或内容大幅变化)
-  if (pos.ratio > 0) {
-    view.scrollTop = Math.round(pos.ratio * view.scrollHeight);
-  }
+  if (target === null) return;
+  restoring = true; // 该滚动事件在下一帧到达, 由监听器消费
+  clearTimeout(restoreTimer);
+  restoreTimer = setTimeout(() => { restoring = false; }, 500); // 兜底: 位置未变化时无事件, 超时解除
+  view.scrollTop = Math.round(target);
 }
 
 // 元素在 #docView 滚动坐标系中的位置(与 offsetParent 无关)
@@ -778,6 +784,8 @@ function savePos(path, pos) {
 function bindScrollMemory() {
   els.docView.addEventListener('scroll', () => {
     if (!state.currentDoc) return;
+    if (restoring) { restoring = false; return; } // 本次滚动由恢复触发, 忽略并消费标记
+    state.userScrolled = true;
     // 在事件时刻就固定 path 与位置, 避免防抖窗口内切换文档导致存错
     const p = state.currentDoc.path;
     const pos = readingPos();
@@ -919,6 +927,8 @@ function findTreeNode(node, path) {
 }
 
 let docMissingNotified = false; // 当前文档删除提示只弹一次
+let restoring = false; // 恢复滚动位置期间, 滚动监听忽略(避免恢复动作被当作"用户滚动")
+let restoreTimer = null;
 
 // 当前打开的文档在磁盘上被改动时, 自动拉取并重新渲染最新内容
 function checkCurrentDocChanged(treeRoot) {
@@ -1000,6 +1010,7 @@ async function openDoc(path, rowEl) {
 }
 
 function renderDoc(doc) {
+  state.userScrolled = false; // 新文档渲染: 重置用户滚动标记(等待自动恢复)
   // 面包屑
   const parts = doc.path.split('/');
   els.crumbs.innerHTML = '<span class="crumb-root">DocShare</span>' +

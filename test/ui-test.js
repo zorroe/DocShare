@@ -141,15 +141,15 @@ const EDGE = 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe'
   await page.waitForFunction(() => document.querySelector('#docView .md-body').textContent.includes('文档 A'), { timeout: 6000 });
   const extLink = await page.$eval('#docView .md-body a[target="_blank"]', (el) => !!el);
   check('外部链接新窗口', extLink, '');
-  // 点击站内链接 → 打开 B
-  await page.click('#docView .md-body a.doc-link');
+  // 点击站内链接 → 打开 B(页内同步派发, 避免 puppeteer click 的 scrollIntoView 与重渲染竞态)
+  await page.$eval('#docView .md-body a.doc-link', (el) => el.click());
   await page.waitForFunction(() => document.querySelector('#docView .md-body').textContent.includes('文档 B'), { timeout: 6000 });
   check('站内文档跳转', true, '');
   // 面包屑确认切到 B
-  const crumbB = await page.$eval('#crumbs', (el) => el.textContent.includes('链接测试B'));
-  check('跳转后面包屑', crumbB, '');
+  await page.waitForFunction(() => document.querySelector('#crumbs').textContent.includes('链接测试B'), { timeout: 6000 });
+  check('跳转后面包屑', true, '');
   // 从 B 点回 A
-  await page.click('#docView .md-body a.doc-link');
+  await page.$eval('#docView .md-body a.doc-link', (el) => el.click());
   await page.waitForFunction(() => document.querySelector('#docView .md-body').textContent.includes('文档 A'), { timeout: 6000 });
   check('返回跳转', true, '');
 
@@ -529,26 +529,26 @@ const EDGE = 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe'
   check('访问密码遮罩显示', maskVisible, '');
   // 错误密码
   await page2.type('#loginPassword', 'wrong-pass');
-  await page2.click('#loginBtn');
+  await page2.$eval('#loginBtn', (el) => el.click());
   await page2.waitForFunction(() => !document.querySelector('#loginError').hidden, { timeout: 6000 });
   check('错误密码拒绝', true, '');
   // 连续错 5 次触发锁定: 即使密码正确也被拒绝
   for (let i = 0; i < 4; i++) {
     await page2.$eval('#loginPassword', (el) => { el.value = ''; });
     await page2.type('#loginPassword', 'wrong-pass');
-    await page2.click('#loginBtn');
+    await page2.$eval('#loginBtn', (el) => el.click());
     await page2.waitForFunction(() => document.querySelector('#loginError').textContent.includes('密码错误'), { timeout: 6000 });
   }
   await page2.$eval('#loginPassword', (el) => { el.value = ''; });
   await page2.type('#loginPassword', 'test-pass');
-  await page2.click('#loginBtn');
+  await page2.$eval('#loginBtn', (el) => el.click());
   await page2.waitForFunction(() => document.querySelector('#loginError').textContent.includes('再试'), { timeout: 6000 });
   check('连续失败锁定(正确密码也被拒)', true, '');
   // 锁定期过后恢复
   await new Promise((r) => setTimeout(r, 5600));
   await page2.$eval('#loginPassword', (el) => { el.value = ''; });
   await page2.type('#loginPassword', 'test-pass');
-  await page2.click('#loginBtn');
+  await page2.$eval('#loginBtn', (el) => el.click());
   await page2.waitForFunction(() => document.querySelector('#tree').textContent.includes('README.md'), { timeout: 10000 });
   check('锁定期后正确密码进入', true, '');
   // 刷新免登录(token 记忆)
