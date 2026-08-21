@@ -209,6 +209,29 @@
     </div>
   </div>
 
+  <!-- ======== 更新下载完成弹窗 ======== -->
+  <div class="modal-mask" id="updateMask" hidden>
+    <div class="modal" role="dialog" aria-modal="true" aria-label="新版安装包已下载">
+      <header class="modal-head">
+        <div>
+          <h3>新版安装包已下载</h3>
+          <p id="updateVersionInfo" class="modal-sub"></p>
+        </div>
+      </header>
+      <div class="update-body">
+        <h4 class="update-notes-title">本次更新内容</h4>
+        <div id="updateNotes" class="md-body"></div>
+      </div>
+      <footer class="modal-foot">
+        <span class="hint">安装将退出 DocShare 并自动启动安装程序</span>
+        <div class="foot-actions">
+          <button id="updateLaterBtn" class="btn ghost" type="button">稍后再说</button>
+          <button id="updateInstallBtn" class="btn primary" type="button">退出并安装</button>
+        </div>
+      </footer>
+    </div>
+  </div>
+
   <!-- ======== 访问密码登录遮罩 ======== -->
   <div id="loginMask" class="login-mask" hidden>
     <div class="login-card">

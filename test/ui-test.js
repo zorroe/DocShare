@@ -19,7 +19,8 @@ const EDGE = 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe'
   const page = await browser.newPage();
   await page.setViewport({ width: 1440, height: 900 });
   page.on('pageerror', (e) => console.log('[pageerror]', e.message));
-  page.on('dialog', (d) => d.accept());
+  let nativeDialogs = 0; // 原生对话框出现次数(更新流程应使用自定义弹窗)
+  page.on('dialog', async (d) => { nativeDialogs++; await d.dismiss(); });
 
   const results = [];
   const check = (name, ok, extra = '') => {
@@ -322,9 +323,9 @@ const EDGE = 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe'
       OpenBrowser: async () => {},
       AutoStart: async () => false,
       SetAutoStart: async () => {},
-      CheckUpdate: async () => ({ current: '1.0.0', latest: '1.1.0', url: 'https://github.com/zorroe/DocShare/releases', downloadUrl: 'https://example.com/Setup.exe', hasUpdate: true }),
+      CheckUpdate: async () => ({ current: '1.0.0', latest: '1.1.0', url: 'https://github.com/zorroe/DocShare/releases', downloadUrl: 'https://example.com/Setup.exe', notes: '## 更新内容\n- 新增全文搜索\n- 修复若干问题', hasUpdate: true }),
       DownloadUpdate: async () => 'C:/Users/test/AppData/Local/Temp/DocShare-Setup-1.1.0.exe',
-      ApplyUpdate: async () => {},
+      ApplyUpdate: async () => { window.__dsApplyCalls = (window.__dsApplyCalls || 0) + 1; },
       ListAccessLogs: async () => [{ time: '2026-08-19T10:00:00+08:00', doc: 'README.md', ip: '192.168.1.5', ua: 'Mozilla/5.0 Chrome' }],
     } } };
   });
@@ -369,11 +370,33 @@ const EDGE = 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe'
   await page.click('#checkUpdateBtn');
   await page.waitForFunction(() => document.querySelector('#updateStatus').textContent.includes('发现新版本'), { timeout: 6000 });
   check('检查更新(发现新版本)', true, '');
-  // 一键下载更新(全局 dialog 自动 accept → 触发 ApplyUpdate mock)
+  // 一键下载更新 → 自定义弹窗展示版本变化与更新说明(不再使用原生 confirm)
+  const applyBefore = await page.evaluate(() => window.__dsApplyCalls || 0);
   await page.click('#dlUpdateBtn');
-  await page.waitForFunction(() => document.querySelector('#updateStatus').textContent.includes('下载完成'), { timeout: 6000 });
+  await page.waitForFunction(() => !document.querySelector('#updateMask').hidden, { timeout: 6000 });
+  const verInfo = await page.$eval('#updateVersionInfo', (el) => el.textContent);
+  check('更新弹窗版本信息', verInfo.includes('1.0.0') && verInfo.includes('1.1.0'), verInfo);
+  const notesText = await page.$eval('#updateNotes', (el) => el.textContent);
+  check('更新弹窗显示更新说明', notesText.includes('更新内容') && notesText.includes('全文搜索'), notesText.slice(0, 40));
   const dlPath = await page.$eval('#updateStatus', (el) => el.textContent);
   check('一键下载更新', dlPath.includes('DocShare-Setup-1.1.0.exe'), dlPath.slice(0, 40));
+  check('无原生确认对话框', nativeDialogs === 0, `dialogs=${nativeDialogs}`);
+  // 稍后再说: 关闭弹窗且不触发安装
+  await page.click('#updateLaterBtn');
+  const maskHidden = await page.$eval('#updateMask', (el) => el.hidden);
+  check('稍后再说关闭弹窗', maskHidden, '');
+  const applyAfterLater = await page.evaluate(() => window.__dsApplyCalls || 0);
+  check('稍后不触发安装', applyAfterLater === applyBefore, '');
+  // 再次检查并下载 → 退出并安装
+  await page.click('#checkUpdateBtn');
+  await page.waitForFunction(() => document.querySelector('#dlUpdateBtn'), { timeout: 6000 });
+  await page.click('#dlUpdateBtn');
+  await page.waitForFunction(() => !document.querySelector('#updateMask').hidden, { timeout: 6000 });
+  await page.click('#updateInstallBtn');
+  await page.waitForFunction((n) => (window.__dsApplyCalls || 0) > n, {}, applyBefore);
+  check('退出并安装触发 ApplyUpdate', true, '');
+  const maskHidden2 = await page.$eval('#updateMask', (el) => el.hidden);
+  check('安装后弹窗关闭', maskHidden2, '');
   await page.click('#pickDirBtn');
   await page.waitForSelector('#dirMask:not([hidden])');
   await page.waitForSelector('.dir-item', { timeout: 4000 });

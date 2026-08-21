@@ -299,7 +299,7 @@ func (a *App) ListAccessLogs() []store.AccessRecord {
 
 // ---- 自动更新 ----
 
-const appVersion = "1.1.6"
+const appVersion = "1.1.7"
 
 // UpdateInfo 更新检查结果。
 type UpdateInfo struct {
@@ -307,6 +307,7 @@ type UpdateInfo struct {
 	Latest      string `json:"latest"`
 	URL         string `json:"url"`
 	DownloadURL string `json:"downloadUrl"` // 安装包直链
+	Notes       string `json:"notes"`       // 更新内容(Release 说明)
 	HasUpdate   bool   `json:"hasUpdate"`
 }
 
@@ -324,6 +325,7 @@ func (a *App) CheckUpdate() (*UpdateInfo, error) {
 	var rel struct {
 		TagName string `json:"tag_name"`
 		HtmlURL string `json:"html_url"`
+		Body    string `json:"body"`
 		Assets  []struct {
 			Name               string `json:"name"`
 			BrowserDownloadURL string `json:"browser_download_url"`
@@ -336,6 +338,10 @@ func (a *App) CheckUpdate() (*UpdateInfo, error) {
 		Current: appVersion,
 		Latest:  strings.TrimPrefix(rel.TagName, "v"),
 		URL:     rel.HtmlURL,
+		Notes:   rel.Body,
+	}
+	if len(info.Notes) > 3000 {
+		info.Notes = info.Notes[:3000] + "\n…"
 	}
 	// 优先安装版(Setup.exe)直链, 其次便携版
 	for _, a := range rel.Assets {

@@ -109,6 +109,11 @@ const els = {
   pwdToggle: $('pwdToggle'),
   checkUpdateBtn: $('checkUpdateBtn'),
   updateStatus: $('updateStatus'),
+  updateMask: $('updateMask'),
+  updateVersionInfo: $('updateVersionInfo'),
+  updateNotes: $('updateNotes'),
+  updateLaterBtn: $('updateLaterBtn'),
+  updateInstallBtn: $('updateInstallBtn'),
   setBlacklist: $('setBlacklist'),
   saveSettingsBtn: $('saveSettingsBtn'),
   openBrowserBtn: $('openBrowserBtn'),
@@ -1111,11 +1116,15 @@ async function loadAccess() {
 }
 
 /* ---- 软件更新检查与一键更新 ---- */
+let lastUpdateInfo = null; // 最近一次检查的更新信息(含更新说明)
+let pendingInstaller = ''; // 已下载待安装的安装包路径
+
 async function checkUpdate() {
   els.checkUpdateBtn.disabled = true;
   els.updateStatus.innerHTML = '正在检查…';
   try {
     const info = await window.go.main.App.CheckUpdate();
+    lastUpdateInfo = info;
     if (info.hasUpdate) {
       els.updateStatus.innerHTML =
         `发现新版本 <code>${esc(info.latest)}</code>（当前 ${esc(info.current)}）` +
@@ -1138,12 +1147,23 @@ async function downloadUpdate() {
   try {
     const installerPath = await window.go.main.App.DownloadUpdate();
     els.updateStatus.innerHTML = `下载完成：<code>${esc(installerPath)}</code>`;
-    if (confirm('新版安装包已下载。\n点击「确定」将退出 DocShare 并自动启动安装程序，是否继续？')) {
-      await window.go.main.App.ApplyUpdate(installerPath);
-    }
+    pendingInstaller = installerPath;
+    showUpdateMask();
   } catch (err) {
     els.updateStatus.innerHTML = '下载失败：' + esc(err.message || '未知错误');
   }
+}
+
+// 展示更新完成弹窗: 版本变化 + 更新说明(以 Markdown 渲染)
+function showUpdateMask() {
+  const info = lastUpdateInfo || {};
+  els.updateVersionInfo.textContent =
+    `当前版本 v${info.current || '?'} → 新版本 v${info.latest || '?'}`;
+  const notes = (info.notes || '').trim()
+    ? marked.parse(info.notes)
+    : '<p>（本次更新未提供说明）</p>';
+  els.updateNotes.innerHTML = DOMPurify.sanitize(notes, { ADD_ATTR: ['target'] });
+  els.updateMask.hidden = false;
 }
 
 /* ---- 目录选择器 ---- */
@@ -1256,6 +1276,15 @@ async function init() {
     els.setAutoStart.addEventListener('change', toggleAutoStart);
     els.accessRefresh.addEventListener('click', loadAccess);
     els.checkUpdateBtn.addEventListener('click', checkUpdate);
+    els.updateLaterBtn.addEventListener('click', () => {
+      els.updateMask.hidden = true;
+      pendingInstaller = '';
+    });
+    els.updateInstallBtn.addEventListener('click', async () => {
+      els.updateMask.hidden = true;
+      if (pendingInstaller) await window.go.main.App.ApplyUpdate(pendingInstaller);
+      pendingInstaller = '';
+    });
     els.pwdToggle.addEventListener('click', () => {
       const show = els.setPassword.type === 'password';
       els.setPassword.type = show ? 'text' : 'password';
