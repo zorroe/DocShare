@@ -3,6 +3,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"log"
@@ -11,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -267,4 +269,64 @@ func (a *App) ListAccessLogs() []store.AccessRecord {
 		return []store.AccessRecord{}
 	}
 	return a.st.ListAccess(200)
+}
+
+// ---- 自动更新检查 ----
+
+const appVersion = "1.0.0"
+
+// UpdateInfo 更新检查结果。
+type UpdateInfo struct {
+	Current   string `json:"current"`
+	Latest    string `json:"latest"`
+	URL       string `json:"url"`
+	HasUpdate bool   `json:"hasUpdate"`
+}
+
+// CheckUpdate 查询 GitHub Release 最新版本。
+func (a *App) CheckUpdate() (*UpdateInfo, error) {
+	client := &http.Client{Timeout: 8 * time.Second}
+	resp, err := client.Get("https://api.github.com/repos/zorroe/DocShare/releases/latest")
+	if err != nil {
+		return nil, fmt.Errorf("无法连接更新服务器: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("更新服务返回 %d", resp.StatusCode)
+	}
+	var rel struct {
+		TagName string `json:"tag_name"`
+		HtmlURL string `json:"html_url"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&rel); err != nil {
+		return nil, err
+	}
+	info := &UpdateInfo{
+		Current: appVersion,
+		Latest:  strings.TrimPrefix(rel.TagName, "v"),
+		URL:     rel.HtmlURL,
+	}
+	info.HasUpdate = compareVersions(info.Latest, appVersion) > 0
+	return info, nil
+}
+
+// compareVersions 按点分段比较版本号: a>b 返回 1, 相等 0, 小于 -1。
+func compareVersions(a, b string) int {
+	pa, pb := strings.Split(a, "."), strings.Split(b, ".")
+	for i := 0; i < len(pa) || i < len(pb); i++ {
+		var x, y int
+		if i < len(pa) {
+			x, _ = strconv.Atoi(pa[i])
+		}
+		if i < len(pb) {
+			y, _ = strconv.Atoi(pb[i])
+		}
+		if x != y {
+			if x > y {
+				return 1
+			}
+			return -1
+		}
+	}
+	return 0
 }

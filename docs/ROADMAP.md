@@ -17,7 +17,7 @@
 
 - [x] **P2-1 Go 单测补齐**：store.Resolve 路径穿越变体、黑名单匹配、config 损坏恢复
 - [x] **P2-2 托盘图标**：设计 .ico 嵌入 exe，替换系统默认图标
-- [ ] **P2-3 自动更新**：启动时检查 GitHub Release 版本并提示
+- [x] **P2-3 自动更新**：启动时检查 GitHub Release 版本并提示
 
 ## P3 — 锦上添花
 

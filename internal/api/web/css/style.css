@@ -1112,6 +1112,19 @@ mark.search-hit {
   cursor: pointer;
 }
 
+.update-status {
+  flex: 1;
+  align-self: center;
+  font-size: 12.5px;
+  color: var(--text-2);
+}
+.update-status code {
+  font-family: var(--mono);
+  background: var(--surface-2);
+  padding: 1px 6px;
+  border-radius: 4px;
+}
+
 /* ---------- 目录选择器 ---------- */
 .dir-browser {
   flex: 1;

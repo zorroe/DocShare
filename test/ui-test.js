@@ -251,6 +251,7 @@ const EDGE = 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe'
       OpenBrowser: async () => {},
       AutoStart: async () => false,
       SetAutoStart: async () => {},
+      CheckUpdate: async () => ({ current: '1.0.0', latest: '1.0.0', url: 'https://github.com/zorroe/DocShare/releases', hasUpdate: false }),
       ListAccessLogs: async () => [{ time: '2026-08-19T10:00:00+08:00', doc: 'README.md', ip: '192.168.1.5', ua: 'Mozilla/5.0 Chrome' }],
     } } };
   });
@@ -269,6 +270,10 @@ const EDGE = 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe'
   await page.waitForSelector('#settingsMask:not([hidden])');
   const docsDirVal = await page.$eval('#setDocsDir', (el) => el.value);
   check('设置面板回填配置', docsDirVal.includes('DocShare/docs'), docsDirVal);
+  // 检查更新
+  await page.click('#checkUpdateBtn');
+  await page.waitForFunction(() => document.querySelector('#updateStatus').textContent.includes('已是最新'), { timeout: 6000 });
+  check('检查更新(已是最新)', true, '');
   await page.click('#pickDirBtn');
   await page.waitForSelector('#dirMask:not([hidden])');
   await page.waitForSelector('.dir-item', { timeout: 4000 });

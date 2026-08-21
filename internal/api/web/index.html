@@ -133,6 +133,14 @@
           <p class="form-hint">启用后，局域网访问需输入密码才能浏览（桌面端自动登录，无需输入）。</p>
         </div>
         <div class="form-item">
+          <label>软件更新</label>
+          <div class="dir-row">
+            <span id="updateStatus" class="update-status">当前版本 <code>1.0.0</code></span>
+            <button id="checkUpdateBtn" class="btn ghost" type="button">检查更新</button>
+          </div>
+          <p class="form-hint">从 GitHub Release 检查最新版本（需要网络连接）。</p>
+        </div>
+        <div class="form-item">
           <label for="setBlacklist">IP 黑名单</label>
           <textarea id="setBlacklist" rows="3" placeholder="每行一个 IP 或网段，例如：&#10;192.168.1.66&#10;10.0.0.0/8" spellcheck="false"></textarea>
           <p class="form-hint">被列入的 IP 将无法访问任何页面（支持精确 IP 与 CIDR 网段），保存后立即生效。注意：本机 127.0.0.1 也在拦截范围内。</p>

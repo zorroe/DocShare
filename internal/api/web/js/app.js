@@ -98,6 +98,8 @@ const els = {
   setLan: $('setLan'),
   setAutoStart: $('setAutoStart'),
   setPassword: $('setPassword'),
+  checkUpdateBtn: $('checkUpdateBtn'),
+  updateStatus: $('updateStatus'),
   setBlacklist: $('setBlacklist'),
   saveSettingsBtn: $('saveSettingsBtn'),
   openBrowserBtn: $('openBrowserBtn'),
@@ -918,6 +920,27 @@ async function loadAccess() {
   }
 }
 
+/* ---- 软件更新检查 ---- */
+async function checkUpdate() {
+  els.checkUpdateBtn.disabled = true;
+  els.updateStatus.innerHTML = '正在检查…';
+  try {
+    const info = await window.go.main.App.CheckUpdate();
+    if (info.hasUpdate) {
+      els.updateStatus.innerHTML =
+        `发现新版本 <code>${esc(info.latest)}</code>（当前 ${esc(info.current)}）` +
+        ` <a href="${esc(info.url)}" target="_blank" style="color:var(--accent)">前往下载</a>`;
+      toast('发现新版本 ' + info.latest);
+    } else {
+      els.updateStatus.innerHTML = `当前版本 <code>${esc(info.current)}</code> · 已是最新`;
+    }
+  } catch (err) {
+    els.updateStatus.innerHTML = '检查失败：' + esc(err.message || '网络不可用');
+  } finally {
+    els.checkUpdateBtn.disabled = false;
+  }
+}
+
 /* ---- 目录选择器 ---- */
 async function openDirPicker() {
   dirBrowsePath = '';
@@ -1018,6 +1041,7 @@ async function init() {
     });
     els.setAutoStart.addEventListener('change', toggleAutoStart);
     els.accessRefresh.addEventListener('click', loadAccess);
+    els.checkUpdateBtn.addEventListener('click', checkUpdate);
   } else {
     // 网页端: 管理按钮与菜单从 DOM 中彻底移除
     if (els.menuBtn) els.menuBtn.remove();
