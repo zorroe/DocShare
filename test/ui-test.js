@@ -512,6 +512,93 @@ const EDGE = 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe'
   await page.waitForFunction(() => document.querySelector('#docView .md-body') && document.querySelector('#docView .md-body').textContent.includes('DocShare'), { timeout: 8000 });
   check('启动自动打开上次文档', true, '');
 
+  // ---- 7. 文档批注: 选中创建 / 行内高亮 / 回复 / 删除 ----
+  // 选中正文中的 "DocShare" 文字(触发选区浮动按钮)
+  await page.evaluate(() => {
+    const body = document.querySelector('#docView .md-body');
+    const walker = document.createTreeWalker(body, NodeFilter.SHOW_TEXT);
+    const nodes = [];
+    while (walker.nextNode()) nodes.push(walker.currentNode);
+    const target = nodes.find((n) => n.textContent.includes('DocShare') && !n.parentNode.closest('code, pre'));
+    if (!target) throw new Error('未找到可选的正文文本');
+    const idx = target.textContent.indexOf('DocShare');
+    const range = document.createRange();
+    range.setStart(target, idx);
+    range.setEnd(target, idx + 'DocShare'.length);
+    const sel = window.getSelection();
+    sel.removeAllRanges();
+    sel.addRange(range);
+    document.querySelector('#docView').dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
+  });
+  await page.waitForSelector('.anno-fab:not([hidden])', { timeout: 3000 });
+  check('选中文字出现批注按钮', true, '');
+  // 点击浮动按钮 → 创建弹窗(引文预览)
+  await page.click('.anno-fab');
+  await page.waitForSelector('#annoMask:not([hidden])');
+  const quotePreview = await page.$eval('#annoQuotePreview', (el) => el.textContent);
+  check('批注弹窗引文预览', quotePreview.includes('DocShare'), quotePreview);
+  // 填写内容但先不填名字 → 提交被拒绝(名字必填)
+  await page.type('#annoContent', '此处建议补充说明');
+  await page.$eval('#annoSubmit', (el) => el.click());
+  await page.waitForFunction(() => !document.querySelector('#annoMask').hidden, { timeout: 6000 });
+  const nameToast = await page.$eval('#toast', (el) => el.textContent);
+  check('无名字提交被拒', nameToast.includes('请输入你的名字'), nameToast);
+  // 填写名字 → 提交成功
+  await page.type('#annoAuthor', 'tester');
+  await page.$eval('#annoSubmit', (el) => el.click());
+  await page.waitForSelector('#docView mark.anno-mark', { timeout: 6000 });
+  const markText = await page.$eval('#docView mark.anno-mark', (el) => el.textContent);
+  check('批注提交后正文高亮', markText.includes('DocShare'), markText);
+  // 顶栏批注按钮与计数
+  await page.waitForFunction(() => !document.querySelector('#annoBtn').hidden && document.querySelector('#annoCount').textContent === '1', { timeout: 6000 });
+  check('批注计数徽标', true, '');
+  // 点击高亮 → 打开该批注的详情弹窗(先关闭提交后自动打开的弹窗)
+  await page.click('#annoViewMask [data-close]');
+  await page.waitForFunction(() => document.querySelector('#annoViewMask').hidden, { timeout: 6000 });
+  await page.click('#docView mark.anno-mark');
+  await page.waitForSelector('#annoViewMask:not([hidden])');
+  const cardText = await page.$eval('#annoViewBody .anno-card', (el) => el.textContent);
+  check('点击高亮打开批注弹窗', cardText.includes('此处建议补充说明'), '');
+  // 已记忆名字: 回复无需重复输入名字
+  const replyHasName = await page.evaluate(() => !!document.querySelector('#annoViewBody .anno-reply-name'));
+  check('回复无需重复输入名字', !replyHasName, '');
+  // 回复
+  await page.type('#annoViewBody .anno-reply-input', '已补充完毕');
+  await page.$eval('#annoViewBody .anno-reply-form', (el) => el.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })));
+  await page.waitForFunction(() => document.querySelectorAll('#annoViewBody .anno-reply').length === 1, { timeout: 6000 });
+  const replyText = await page.$eval('#annoViewBody .anno-reply-text', (el) => el.textContent);
+  check('批注回复', replyText.includes('已补充完毕'), replyText);
+  // 解决批注: 徽标 + 计数清零 + 行内锚点弱化
+  await page.click('#annoViewResolve');
+  await page.waitForFunction(() => !!document.querySelector('#annoViewBody .anno-resolved-badge'), { timeout: 6000 });
+  const badge = await page.$eval('#annoViewBody .anno-resolved-badge', (el) => el.textContent);
+  check('批注标记解决', badge.includes('已解决'), badge);
+  await page.waitForFunction(() => document.querySelector('#annoCount').textContent === '', { timeout: 6000 });
+  check('解决后计数清零', true, '');
+  await page.waitForFunction(() => !!document.querySelector('#docView mark.anno-mark.resolved'), { timeout: 6000 });
+  check('解决后锚点弱化', true, '');
+  // 重新打开
+  await page.click('#annoViewResolve');
+  await page.waitForFunction(() => !document.querySelector('#annoViewBody .anno-resolved-badge'), { timeout: 6000 });
+  check('批注重新打开', true, '');
+  // 顶栏按钮 → 批注列表弹窗(先关闭详情弹窗)
+  await page.click('#annoViewMask [data-close]');
+  await page.waitForFunction(() => document.querySelector('#annoViewMask').hidden, { timeout: 6000 });
+  await page.click('#annoBtn');
+  await page.waitForSelector('#annoListMask:not([hidden])');
+  const listItem = await page.$eval('#annoList .anno-list-item', (el) => el.textContent);
+  check('批注列表弹窗', listItem.includes('此处建议补充说明'), '');
+  // 列表项点击 → 定位并打开详情弹窗
+  await page.click('#annoList .anno-list-item');
+  await page.waitForSelector('#annoViewMask:not([hidden])');
+  check('列表点击打开详情', true, '');
+  // 删除(mock confirm 放行)
+  await page.evaluate(() => { window.confirm = () => true; });
+  await page.click('#annoViewDelete');
+  await page.waitForFunction(() => document.querySelector('#annoViewMask').hidden, { timeout: 6000 });
+  await page.waitForFunction(() => document.querySelectorAll('#docView mark.anno-mark').length === 0, { timeout: 6000 });
+  check('批注删除', true, '');
+
   // ---- 8. 访问密码登录流程(内嵌启动密码服务, 随机端口避免残留冲突) ----
   const authPort = 18100 + Math.floor(Math.random() * 400);
   const authServer = spawn(SERVER, [
@@ -532,13 +619,19 @@ const EDGE = 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe'
   await page2.$eval('#loginBtn', (el) => el.click());
   await page2.waitForFunction(() => !document.querySelector('#loginError').hidden, { timeout: 6000 });
   check('错误密码拒绝', true, '');
-  // 连续错 5 次触发锁定: 即使密码正确也被拒绝
+  // 连续失败触发锁定: 通过 API 直调快速累计失败次数(避免 UI 输入延迟
+  // 导致 5 秒锁定期在循环期间过期, 造成偶发超时); 再用 UI 验证锁定效果
+  const authBase = 'http://127.0.0.1:' + authPort;
   for (let i = 0; i < 4; i++) {
-    await page2.$eval('#loginPassword', (el) => { el.value = ''; });
-    await page2.type('#loginPassword', 'wrong-pass');
-    await page2.$eval('#loginBtn', (el) => el.click());
-    await page2.waitForFunction(() => document.querySelector('#loginError').textContent.includes('密码错误'), { timeout: 6000 });
+    await page2.evaluate(async (base) => {
+      await fetch(base + '/api/auth/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ password: 'wrong-pass' }),
+      });
+    }, authBase);
   }
+  // UI 输入正确密码 → 锁定期间即使密码正确也被拒
   await page2.$eval('#loginPassword', (el) => { el.value = ''; });
   await page2.type('#loginPassword', 'test-pass');
   await page2.$eval('#loginBtn', (el) => el.click());

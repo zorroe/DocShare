@@ -1532,3 +1532,286 @@ mark.search-hit {
   .form-row { grid-template-columns: 1fr; }
   .doc-meta { display: none; }
 }
+
+/* ============================================================
+   文档批注: 行内高亮 / 选区浮动按钮 / 右侧面板
+   ============================================================ */
+
+/* 批注锚点高亮(与搜索高亮区分: 下边框 + 黄色系) */
+mark.anno-mark {
+  background: rgba(240, 179, 94, 0.2);
+  color: inherit;
+  border-radius: 3px;
+  padding: 0 2px;
+  border-bottom: 1.5px solid var(--warn);
+  cursor: pointer;
+  transition: background var(--transition);
+}
+mark.anno-mark:hover { background: rgba(240, 179, 94, 0.34); }
+mark.anno-mark.active { background: rgba(240, 179, 94, 0.42); }
+mark.anno-mark.flash { animation: annoFlash 1.8s ease; }
+@keyframes annoFlash {
+  0%, 55% { background: rgba(240, 179, 94, 0.55); }
+  100% { background: rgba(240, 179, 94, 0.2); }
+}
+
+/* 批注计数徽标(顶栏按钮/面板标题) */
+.anno-count {
+  margin-left: 3px;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 16px;
+}
+.anno-count:empty { display: none; }
+
+/* 选区浮动「批注」按钮 */
+.anno-fab {
+  position: fixed;
+  z-index: 120;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 13px;
+  border: 1px solid var(--border-strong);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--accent);
+  font-size: 12.5px;
+  font-weight: 600;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.18);
+  cursor: pointer;
+  animation: fadeIn 150ms ease;
+}
+.anno-fab:hover { border-color: var(--accent); background: var(--accent-soft); }
+.anno-fab svg { width: 14px; height: 14px; }
+.anno-fab[hidden] { display: none; }
+
+/* 批注面板(已移除, 改为独立弹窗) */
+/* 批注计数徽标(顶栏按钮/面板标题) */
+
+/* 批注卡片 */
+.anno-card {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 10px 12px;
+  background: var(--surface-2);
+  transition: border-color var(--transition);
+  flex-shrink: 0;
+}
+.anno-card.active { border-color: var(--warn); box-shadow: 0 0 0 1px var(--warn-soft); }
+.anno-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.anno-author {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--accent);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.anno-time { font-size: 11px; color: var(--text-3); white-space: nowrap; }
+
+/* 引文引用块 */
+.anno-quote {
+  margin: 8px 0 0;
+  padding: 6px 10px;
+  border-left: 3px solid var(--warn);
+  background: var(--warn-soft);
+  border-radius: 0 6px 6px 0;
+  color: var(--text-2);
+  font-size: 12px;
+  line-height: 1.55;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  word-break: break-all;
+}
+.anno-content {
+  margin-top: 8px;
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--text);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* 批注列表弹窗 */
+.anno-list-body {
+  overflow-y: auto;
+  padding: 6px 22px 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-height: 120px;
+  max-height: 52vh;
+}
+.anno-list-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 9px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-s);
+  background: var(--surface-2);
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: all var(--transition);
+}
+.anno-list-item:hover { border-color: var(--accent); background: var(--accent-soft); }
+.anno-list-item .anno-author { flex-shrink: 0; }
+.anno-list-text {
+  flex: 1;
+  min-width: 0;
+  font-size: 12.5px;
+  color: var(--text-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.anno-status {
+  flex-shrink: 0;
+  padding: 1px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+}
+.anno-status.open { background: var(--warn-soft); color: var(--warn); }
+.anno-status.done { background: var(--ok-soft); color: var(--ok); }
+.anno-list-item.resolved .anno-list-text { color: var(--text-3); text-decoration: line-through; }
+
+/* 批注详情弹窗 */
+.anno-view-body {
+  overflow-y: auto;
+  padding: 6px 22px 8px;
+  max-height: 52vh;
+}
+.anno-view-body .anno-card {
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-s);
+  padding: 12px 14px;
+}
+
+/* 批注创建弹窗表单(主题化输入框) */
+.anno-form {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 6px 22px 8px;
+}
+.anno-form textarea {
+  width: 100%;
+  padding: 10px 13px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-s);
+  background: var(--surface-2);
+  color: var(--text);
+  font-size: 13.5px;
+  line-height: 1.65;
+  resize: vertical;
+  outline: none;
+  transition: border-color var(--transition), box-shadow var(--transition);
+}
+.anno-form textarea:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+.anno-form textarea::placeholder, .anno-form input::placeholder { color: var(--text-3); }
+.anno-form input[type="text"] {
+  width: 100%;
+  padding: 9px 13px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-s);
+  background: var(--surface-2);
+  color: var(--text);
+  font-size: 13px;
+  outline: none;
+  transition: border-color var(--transition), box-shadow var(--transition);
+}
+.anno-form input[type="text"]:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+.anno-form .form-hint { margin: 0; }
+
+/* 已解决批注: 徽标 + 置灰 */
+.anno-resolved-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 8px;
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: var(--ok-soft);
+  color: var(--ok);
+  font-size: 11px;
+  font-weight: 700;
+}
+.anno-card.resolved {
+  opacity: 0.62;
+  background: transparent;
+}
+.anno-card.resolved .anno-quote,
+.anno-card.resolved .anno-content,
+.anno-card.resolved .anno-reply-text { color: var(--text-3); }
+
+/* 已解决批注的行内锚点: 弱化为灰色虚线下划线 */
+mark.anno-mark.resolved {
+  background: transparent;
+  border-bottom: 1.5px dashed var(--text-3);
+  opacity: 0.75;
+}
+mark.anno-mark.resolved:hover { background: rgba(240, 179, 94, 0.2); opacity: 1; }
+mark.anno-mark.resolved.active { background: rgba(240, 179, 94, 0.42); border-bottom-style: solid; }
+
+/* 回复线程 */
+.anno-replies {
+  margin-top: 8px;
+  border-top: 1px dashed var(--border);
+  padding-top: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.anno-reply-head { display: flex; align-items: baseline; gap: 8px; }
+.anno-reply .anno-author { font-size: 11.5px; }
+.anno-reply-text {
+  margin-top: 2px;
+  font-size: 12.5px;
+  line-height: 1.55;
+  color: var(--text-2);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.anno-reply-form {
+  margin-top: 8px;
+  display: flex;
+  gap: 6px;
+}
+.anno-reply-input {
+  flex: 1;
+  min-width: 0;
+  padding: 5px 9px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+  color: var(--text);
+  font-size: 12.5px;
+  outline: none;
+  transition: border-color var(--transition);
+}
+.anno-reply-input:focus { border-color: var(--accent); }
+.anno-reply-name { flex: 0 0 118px; }
+.anno-reply-form .btn { padding: 4px 10px; font-size: 12px; flex-shrink: 0; }

@@ -54,6 +54,9 @@ const ICONS = {
   chevronRight: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>',
   eye: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>',
   eyeOff: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>',
+  comment: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>',
+  trash: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg>',
+  undo: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>',
 };
 
 /* ---------- 状态 ---------- */
@@ -73,6 +76,9 @@ const state = {
   recent: (() => { try { return JSON.parse(store.getItem('docshare-recent') || '[]'); } catch { return []; } })(),
   scrollTimer: null,
   userScrolled: false, // 用户是否已主动滚动(自动恢复位置时让位)
+  annotations: [], // 当前文档批注列表
+  annoSig: '',      // 批注列表签名(轮询对比用)
+  activeAnno: '',   // 批注面板当前定位的批注 id
 };
 
 /* ---------- DOM 引用 ---------- */
@@ -131,6 +137,22 @@ const els = {
   dirUpBtn: $('dirUpBtn'),
   dirChooseBtn: $('dirChooseBtn'),
   treeTip: $('treeTip'),
+  annoBtn: $('annoBtn'),
+  annoCount: $('annoCount'),
+  annoListMask: $('annoListMask'),
+  annoListSub: $('annoListSub'),
+  annoList: $('annoList'),
+  annoViewMask: $('annoViewMask'),
+  annoViewQuote: $('annoViewQuote'),
+  annoViewBody: $('annoViewBody'),
+  annoViewHint: $('annoViewHint'),
+  annoViewResolve: $('annoViewResolve'),
+  annoViewDelete: $('annoViewDelete'),
+  annoMask: $('annoMask'),
+  annoQuotePreview: $('annoQuotePreview'),
+  annoContent: $('annoContent'),
+  annoAuthor: $('annoAuthor'),
+  annoSubmit: $('annoSubmit'),
 };
 
 /* 目录选择器当前浏览路径 */
@@ -622,6 +644,431 @@ function exportPDF() {
   window.print(); // 用户可在打印对话框中选择"另存为 PDF"
 }
 
+/* ============================================================
+   文档批注: 选区创建 / 行内高亮 / 回复 / 删除
+   ============================================================ */
+let annoFab = null;      // 选区浮动按钮(惰性创建)
+let pendingAnno = null;  // 待提交的 { quote, offset }
+
+/* ---- 数据加载(创建/回复/解决/删除/轮询后统一刷新) ---- */
+// forceRender: 用户主动操作后为 true, 跳过输入焦点保护强制刷新
+async function loadAnnotations(forceRender) {
+  if (!state.currentDoc) return;
+  try {
+    const list = await api('/api/annotations?path=' + encodeURIComponent(state.currentDoc.path));
+    const sig = JSON.stringify(list);
+    if (sig === state.annoSig) return;
+    state.annotations = list || [];
+    state.annoSig = sig;
+    renderAnnotationMarks();
+    // 批注列表弹窗打开时刷新列表
+    if (!els.annoListMask.hidden) renderAnnoList();
+    // 详情弹窗打开时刷新当前批注(回复输入中不打断; 主动操作后强制)
+    if (!els.annoViewMask.hidden && state.activeAnno &&
+      (forceRender || !els.annoViewBody.contains(document.activeElement))) {
+      renderAnnoView(state.activeAnno);
+    }
+  } catch { /* 服务不可用时静默(批注不可用) */ }
+}
+
+/* ---- 行内高亮 ----
+   在渲染后的正文中定位批注引文并包裹为 <mark class="anno-mark">。
+   支持跨相邻文本节点(加粗/行内代码会分割文本节点);
+   匹配失败(文档已改动)时批注仅显示在列表中。 */
+function renderAnnotationMarks() {
+  const root = els.docView.querySelector('.md-body');
+  if (!root || !state.currentDoc) return;
+  // 先还原上一次的 marks(展开回文本节点), 保证幂等
+  root.querySelectorAll('mark.anno-mark').forEach((m) => {
+    const frag = document.createDocumentFragment();
+    while (m.firstChild) frag.appendChild(m.firstChild);
+    m.replaceWith(frag);
+  });
+  for (const a of state.annotations || []) {
+    if (findAndWrapQuote(root, a.quote, a.id)) {
+      const m = root.querySelector(`mark.anno-mark[data-anno-id="${CSS.escape(a.id)}"]`);
+      if (m && a.resolved) m.classList.add('resolved');
+    }
+  }
+  // 面板定位的批注: mark 同步高亮
+  if (state.activeAnno) {
+    const am = root.querySelector(`mark.anno-mark[data-anno-id="${CSS.escape(state.activeAnno)}"]`);
+    if (am) am.classList.add('active');
+  }
+  updateAnnoBtn();
+}
+
+function updateAnnoBtn() {
+  // 计数展示未解决批注数(已解决不再打扰)
+  const open = (state.annotations || []).filter((a) => !a.resolved).length;
+  els.annoBtn.hidden = !state.currentDoc;
+  els.annoCount.textContent = open ? String(open) : '';
+}
+
+function findAndWrapQuote(root, quote, annoId) {
+  const q = String(quote || '').trim();
+  if (!q) return false;
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+  const nodes = [];
+  while (walker.nextNode()) nodes.push(walker.currentNode);
+  for (let i = 0; i < nodes.length; i++) {
+    if (nodes[i].parentNode.closest('code, pre, a')) continue;
+    // 从 i 开始拼接连续文本(跨行内元素), 覆盖引文即可
+    let acc = '';
+    let j = i;
+    const parts = [];
+    while (j < nodes.length && acc.length < q.length + 32) {
+      const n = nodes[j];
+      if (n.parentNode.closest('code, pre, a')) break;
+      parts.push(n);
+      acc += n.textContent;
+      j++;
+    }
+    const idx = acc.indexOf(q);
+    if (idx < 0) continue;
+    // 定位起点节点与偏移
+    let k = 0;
+    let pos = idx;
+    while (k < parts.length && pos >= parts[k].textContent.length) {
+      pos -= parts[k].textContent.length;
+      k++;
+    }
+    if (k >= parts.length) continue;
+    return wrapQuote(parts, k, pos, q.length, annoId);
+  }
+  return false;
+}
+
+// 将 [parts[k] 的 pos 起, len 长度] 的文本移入一个 mark 元素。
+// 跨父节点时 mark 插在首节点前, 后续文本节点 appendChild 移入(顺序保持)。
+function wrapQuote(parts, startIdx, startOff, len, annoId) {
+  const mark = document.createElement('mark');
+  mark.className = 'anno-mark';
+  mark.dataset.annoId = annoId;
+  let remaining = len;
+  let i = startIdx;
+  let off = startOff;
+  let inserted = false;
+  while (remaining > 0 && i < parts.length) {
+    let piece = parts[i];
+    if (off > 0) piece = piece.splitText(off); // 前段留在原地, piece 为 [off:]
+    const avail = piece.textContent.length;
+    const take = Math.min(remaining, avail);
+    if (take < avail) piece.splitText(take); // 后段留在原地
+    if (!inserted) {
+      piece.parentNode.insertBefore(mark, piece);
+      inserted = true;
+    }
+    mark.appendChild(piece);
+    remaining -= take;
+    off = 0;
+    i++;
+  }
+  return remaining <= 0;
+}
+
+/* ---- 选区交互 ---- */
+function bindAnnoSelection() {
+  document.addEventListener('mouseup', (e) => {
+    // 弹窗/面板/浮动按钮内的操作不触发
+    if (e.target.closest('.modal-mask, .anno-fab, .toc-panel, .tree, .search')) {
+      hideAnnoFab();
+      return;
+    }
+    const sel = window.getSelection();
+    const text = sel && !sel.isCollapsed ? sel.toString().trim() : '';
+    if (!text || !state.currentDoc || text.length > 300) { hideAnnoFab(); return; }
+    const range = sel.rangeCount ? sel.getRangeAt(0) : null;
+    if (!range || !els.docView.contains(range.commonAncestorContainer)) { hideAnnoFab(); return; }
+    const rect = range.getBoundingClientRect();
+    if (!rect || rect.width === 0) { hideAnnoFab(); return; }
+    getAnnoFab().hidden = false;
+    getAnnoFab().style.left = Math.max(8, Math.min(rect.right, window.innerWidth - 96)) + 'px';
+    getAnnoFab().style.top = Math.max(8, rect.bottom + 6) + 'px';
+  });
+  // 滚动时隐藏浮动按钮(位置不再准确)
+  els.docView.addEventListener('scroll', hideAnnoFab);
+  document.addEventListener('keydown', hideAnnoFab);
+}
+
+function getAnnoFab() {
+  if (annoFab) return annoFab;
+  annoFab = document.createElement('button');
+  annoFab.type = 'button';
+  annoFab.className = 'anno-fab';
+  annoFab.innerHTML = `${ICONS.comment}<span>批注</span>`;
+  annoFab.addEventListener('click', () => {
+    const sel = window.getSelection();
+    const text = sel && !sel.isCollapsed ? sel.toString().trim() : '';
+    hideAnnoFab();
+    if (!text || !state.currentDoc) return;
+    pendingAnno = { quote: text, offset: annoOffsetOf(sel) };
+    openAnnoDialog(text);
+  });
+  document.body.appendChild(annoFab);
+  return annoFab;
+}
+
+function hideAnnoFab() {
+  if (annoFab) annoFab.hidden = true;
+}
+
+// 计算选区起点在文档纯文本中的偏移(辅助定位; 找不到返回 0)
+function annoOffsetOf(sel) {
+  const root = els.docView.querySelector('.md-body');
+  if (!root || !sel || sel.rangeCount === 0) return 0;
+  const range = sel.getRangeAt(0);
+  const start = range.startContainer;
+  if (start.nodeType === Node.TEXT_NODE) return annoOffsetOfNode(root, start, range.startOffset);
+  // 起点是元素: 取其内部第一个文本节点近似
+  const w = document.createTreeWalker(start, NodeFilter.SHOW_TEXT);
+  const first = w.nextNode();
+  return first ? annoOffsetOfNode(root, first, 0) : 0;
+}
+
+function annoOffsetOfNode(root, node, extra) {
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+  let off = 0;
+  while (walker.nextNode()) {
+    const n = walker.currentNode;
+    if (n === node) return off + extra;
+    off += n.textContent.length;
+  }
+  return 0;
+}
+
+/* ---- 创建弹窗 ---- */
+function openAnnoDialog(quote) {
+  const preview = quote.length > 80 ? quote.slice(0, 80) + '…' : quote;
+  els.annoQuotePreview.textContent = `「${preview}」`;
+  els.annoContent.value = '';
+  els.annoAuthor.value = store.getItem('docshare-author') || '';
+  els.annoMask.hidden = false;
+  setTimeout(() => els.annoContent.focus(), 60);
+}
+
+async function submitAnno() {
+  const content = els.annoContent.value.trim();
+  const author = els.annoAuthor.value.trim().slice(0, 50);
+  if (!content) { toast('请输入批注内容', 'err'); return; }
+  if (!author) { toast('请输入你的名字', 'err'); els.annoAuthor.focus(); return; }
+  if (!state.currentDoc || !pendingAnno) return;
+  store.setItem('docshare-author', author);
+  try {
+    const created = await api('/api/annotations', {
+      method: 'POST',
+      body: {
+        doc: state.currentDoc.path,
+        quote: pendingAnno.quote,
+        offset: pendingAnno.offset,
+        author,
+        content,
+      },
+    });
+    els.annoMask.hidden = true;
+    pendingAnno = null;
+    toast('批注已添加');
+    await loadAnnotations(true);
+    if (created && created.id) openAnnoView(created.id); // 打开新批注的详情弹窗
+  } catch (err) {
+    toast('批注保存失败：' + (err.message || '未知错误'), 'err');
+  }
+}
+
+/* ---- 批注列表弹窗(顶栏按钮) ---- */
+function openAnnoList() {
+  els.annoListMask.hidden = false;
+  renderAnnoList();
+}
+
+function renderAnnoList() {
+  // 未解决在前, 已解决置后(各自按时间升序)
+  const list = [...(state.annotations || [])].sort((x, y) => {
+    if (!!x.resolved !== !!y.resolved) return x.resolved ? 1 : -1;
+    return x.time < y.time ? -1 : x.time > y.time ? 1 : 0;
+  });
+  const open = list.filter((a) => !a.resolved).length;
+  els.annoListSub.textContent = list.length
+    ? `共 ${list.length} 条 · 待解决 ${open} 条`
+    : '本文档暂无批注';
+  if (!list.length) {
+    els.annoList.innerHTML = '<div class="anno-empty">本文档暂无批注<br/><span>选中正文文字即可添加</span></div>';
+    return;
+  }
+  els.annoList.innerHTML = list.map(annoListItemHTML).join('');
+}
+
+function annoListItemHTML(a) {
+  const summary = (a.content || '').replace(/\s+/g, ' ').slice(0, 60);
+  return `
+    <button type="button" class="anno-list-item${a.resolved ? ' resolved' : ''}" data-id="${esc(a.id)}">
+      <span class="anno-author">${esc(a.author || '匿名')}</span>
+      <span class="anno-list-text">${esc(summary)}</span>
+      <span class="anno-status ${a.resolved ? 'done' : 'open'}">${a.resolved ? '已解决' : '待解决'}</span>
+    </button>`;
+}
+
+function bindAnnoList() {
+  els.annoList.addEventListener('click', (e) => {
+    const item = e.target.closest('.anno-list-item');
+    if (!item) return;
+    const id = item.dataset.id;
+    els.annoListMask.hidden = true;
+    jumpToAnno(id); // 定位正文 + 打开详情弹窗
+  });
+}
+
+/* ---- 批注详情弹窗(单条批注) ---- */
+function openAnnoView(id) {
+  if (!id) return;
+  state.activeAnno = id;
+  els.annoViewMask.hidden = false;
+  renderAnnoView(id);
+}
+
+function closeAnnoView() {
+  els.annoViewMask.hidden = true;
+  state.activeAnno = '';
+  renderAnnotationMarks(); // 清除 mark 激活态
+}
+
+// 渲染当前打开的批注详情; 批注已被删除时关闭弹窗
+function renderAnnoView(id) {
+  const a = (state.annotations || []).find((x) => x.id === id);
+  if (!a) {
+    els.annoViewBody.innerHTML = '<div class="anno-empty">该批注已被删除</div>';
+    els.annoViewHint.textContent = '';
+    els.annoViewResolve.hidden = true;
+    els.annoViewDelete.hidden = true;
+    return;
+  }
+  els.annoViewQuote.textContent = `「${a.quote.length > 60 ? a.quote.slice(0, 60) + '…' : a.quote}」`;
+  els.annoViewResolve.hidden = false;
+  els.annoViewDelete.hidden = false;
+  els.annoViewResolve.textContent = a.resolved ? '重新打开' : '标记已解决';
+  els.annoViewHint.textContent = a.resolved ? '该批注已解决' : '';
+  // 尚未记忆名字时, 回复需先输入名字
+  const myName = (store.getItem('docshare-author') || '').trim();
+  const replies = (a.replies || []).map((r) => `
+    <div class="anno-reply">
+      <div class="anno-reply-head">
+        <span class="anno-author">${esc(r.author || '匿名')}</span>
+        <span class="anno-time">${esc(fmtTime(r.time))}</span>
+      </div>
+      <div class="anno-reply-text">${esc(r.content)}</div>
+    </div>`).join('');
+  els.annoViewBody.innerHTML = `
+    <div class="anno-card${a.resolved ? ' resolved' : ''}">
+      <div class="anno-card-head">
+        <span class="anno-author">${esc(a.author || '匿名')}</span>
+        <span class="anno-time">${esc(fmtTime(a.time))}</span>
+      </div>
+      ${a.resolved ? '<span class="anno-resolved-badge">已解决</span>' : ''}
+      <blockquote class="anno-quote">${esc(a.quote)}</blockquote>
+      <div class="anno-content">${esc(a.content)}</div>
+      ${replies ? `<div class="anno-replies">${replies}</div>` : ''}
+      <form class="anno-reply-form">
+        ${myName ? '' : '<input type="text" class="anno-reply-input anno-reply-name" placeholder="请输入你的名字" maxlength="50" autocomplete="off" />'}
+        <input type="text" class="anno-reply-input" placeholder="回复…" maxlength="2000" autocomplete="off" />
+        <button type="submit" class="btn ghost">回复</button>
+      </form>
+    </div>`;
+}
+
+function bindAnnoView() {
+  els.annoViewBody.addEventListener('submit', (e) => {
+    const form = e.target.closest('.anno-reply-form');
+    if (!form) return;
+    e.preventDefault();
+    replyAnno(form);
+  });
+  els.annoViewResolve.addEventListener('click', () => {
+    if (state.activeAnno) toggleResolve(state.activeAnno);
+  });
+  els.annoViewDelete.addEventListener('click', () => {
+    if (state.activeAnno) deleteAnno(state.activeAnno);
+  });
+}
+
+// 标记解决 / 重新打开(可逆, 无需确认)
+async function toggleResolve(id) {
+  if (!id || !state.currentDoc) return;
+  const a = (state.annotations || []).find((x) => x.id === id);
+  const target = !(a && a.resolved);
+  try {
+    await api('/api/annotations/' + encodeURIComponent(id) + '/resolve', {
+      method: 'POST',
+      body: { doc: state.currentDoc.path, resolved: target },
+    });
+    toast(target ? '批注已标记为已解决' : '批注已重新打开');
+    await loadAnnotations(true); // 主动操作: 强制刷新
+  } catch (err) {
+    toast('操作失败：' + (err.message || '未知错误'), 'err');
+  }
+}
+
+async function deleteAnno(id) {
+  if (!id || !state.currentDoc) return;
+  if (!confirm('确定删除这条批注及其全部回复？')) return;
+  try {
+    await api('/api/annotations/' + encodeURIComponent(id) +
+      '?path=' + encodeURIComponent(state.currentDoc.path), { method: 'DELETE' });
+    toast('批注已删除');
+    if (state.activeAnno === id) closeAnnoView(); // 详情弹窗关闭
+    await loadAnnotations(true);
+  } catch (err) {
+    toast('删除失败：' + (err.message || '未知错误'), 'err');
+  }
+}
+
+async function replyAnno(form) {
+  if (!state.currentDoc || !state.activeAnno) return;
+  const nameInput = form.querySelector('.anno-reply-name');
+  const input = form.querySelector('.anno-reply-input:not(.anno-reply-name)');
+  const content = input.value.trim();
+  if (!content) return;
+  // 首次回复(无记忆名字): 必须输入名字
+  let author = (store.getItem('docshare-author') || '').trim();
+  if (nameInput) {
+    author = nameInput.value.trim().slice(0, 50);
+    if (!author) { toast('请输入你的名字', 'err'); nameInput.focus(); return; }
+    store.setItem('docshare-author', author);
+  }
+  if (!author) { toast('请输入你的名字', 'err'); return; } // 防御
+  try {
+    await api('/api/annotations/' + encodeURIComponent(state.activeAnno) + '/reply', {
+      method: 'POST',
+      body: { doc: state.currentDoc.path, author, content },
+    });
+    input.value = '';
+    input.blur(); // 释放焦点, 详情可正常刷新
+    await loadAnnotations(true); // 主动操作: 强制刷新
+  } catch (err) {
+    toast('回复失败：' + (err.message || '未知错误'), 'err');
+  }
+}
+
+// 定位到批注在正文中的位置并打开详情弹窗
+function jumpToAnno(id) {
+  if (!state.currentDoc) return;
+  state.activeAnno = id;
+  renderAnnotationMarks(); // 先重建(确保 active 态), 再定位避免 flash 丢失
+  const mark = els.docView.querySelector(`mark.anno-mark[data-anno-id="${CSS.escape(id)}"]`);
+  if (mark) {
+    mark.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    flashMark(mark);
+  }
+  openAnnoView(id);
+}
+
+function flashMark(mark) {
+  mark.classList.remove('flash');
+  void mark.offsetWidth; // 重启动画
+  mark.classList.add('flash');
+  clearTimeout(flashMark._t);
+  flashMark._t = setTimeout(() => mark.classList.remove('flash'), 1800);
+}
+
 // 全局快捷键: Ctrl+K 搜索 / Ctrl+P 打印导出 / Esc 关闭弹窗
 function bindShortcuts() {
   document.addEventListener('keydown', (e) => {
@@ -641,7 +1088,7 @@ function bindShortcuts() {
     if (e.key === 'Escape') {
       // 登录遮罩不允许 Esc 关闭(必须输入密码或刷新)
       if (els.loginMask && !els.loginMask.hidden) return;
-      ['updateMask', 'dirMask', 'settingsMask', 'accessMask'].forEach((id) => {
+      ['updateMask', 'dirMask', 'settingsMask', 'accessMask', 'annoMask', 'annoListMask', 'annoViewMask'].forEach((id) => {
         const el = document.getElementById(id);
         if (el && !el.hidden) el.hidden = true;
       });
@@ -913,6 +1360,7 @@ async function pollTree() {
     renderTree();
     checkCurrentDocChanged(node); // 当前文档被外部修改/删除时自动刷新
   } catch { /* 服务不可用时静默 */ }
+  loadAnnotations(); // 批注静默轮询(多人协作: 新批注 ≤3s 可见)
 }
 
 // 在目录树中按完整路径查找节点(含多根前缀)
@@ -967,6 +1415,17 @@ async function reloadCurrentDoc() {
 // 文档正文内链接交互: 站内文档跳转 + 锚点平滑滚动(事件委托, 绑定一次)
 function bindDocNav() {
   els.docView.addEventListener('click', (e) => {
+    // 点击批注高亮 → 打开该批注的详情弹窗
+    const mark = e.target.closest('mark.anno-mark');
+    if (mark) {
+      e.preventDefault();
+      state.activeAnno = mark.dataset.annoId;
+      renderAnnotationMarks(); // 重建(同步 active 态), 再闪烁新 mark
+      const nm = els.docView.querySelector(`mark.anno-mark[data-anno-id="${CSS.escape(state.activeAnno)}"]`);
+      if (nm) flashMark(nm);
+      openAnnoView(mark.dataset.annoId);
+      return;
+    }
     const link = e.target.closest('a');
     if (!link) return;
     // 站内 md 文档链接
@@ -1000,10 +1459,17 @@ async function openDoc(path, rowEl) {
   try {
     const doc = await api('/api/doc?path=' + encodeURIComponent(path));
     state.currentDoc = doc;
+    // 切换文档: 重置批注状态(异步加载后重新渲染)
+    state.annotations = [];
+    state.annoSig = '';
+    state.activeAnno = '';
+    els.annoListMask.hidden = true;
+    els.annoViewMask.hidden = true;
     document.querySelectorAll('.tree-row.active').forEach((r) => r.classList.remove('active'));
     if (rowEl) rowEl.classList.add('active');
     renderDoc(doc);
     rememberDoc(doc.path, doc.name);
+    loadAnnotations(); // 拉取批注并渲染行内高亮
   } catch (err) {
     toast(err.message, 'err');
   }
@@ -1049,7 +1515,10 @@ function renderDoc(doc) {
   // 此前内容高度尚未定型(图片/图表异步加载), 直接恢复的位置会偏移
   const settled = Promise.allSettled([mdReady, waitImages(mdBody)]);
   settled.then(() => {
-    if (state.currentDoc && state.currentDoc.path === doc.path) restoreScroll();
+    if (state.currentDoc && state.currentDoc.path === doc.path) {
+      renderAnnotationMarks(); // 批注高亮(依赖 state.annotations, 异步加载后再次调用)
+      restoreScroll();
+    }
   });
 }
 
@@ -1450,6 +1919,14 @@ async function init() {
   createTocFab();
   bindExport();
   bindDocNav();
+  bindAnnoSelection();
+  bindAnnoList();
+  bindAnnoView();
+  els.annoBtn.addEventListener('click', openAnnoList);
+  els.annoSubmit.addEventListener('click', submitAnno);
+  els.annoContent.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) submitAnno();
+  });
 
   els.themeBtn.addEventListener('click', () => {
     // 循环: 深色 → 浅色 → 跟随系统 → 深色

@@ -72,6 +72,10 @@
         <div id="crumbs" class="crumbs"><span class="crumb-root">DocShare</span></div>
         <div class="topbar-actions">
           <span id="docMeta" class="doc-meta"></span>
+          <button id="annoBtn" class="btn ghost" type="button" hidden title="查看本文档批注">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+            批注<span id="annoCount" class="anno-count"></span>
+          </button>
           <div class="export-wrap">
             <button id="exportBtn" class="btn ghost" type="button" disabled>
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
@@ -260,6 +264,74 @@
       <input id="loginPassword" type="password" placeholder="请输入访问密码" autocomplete="off" />
       <p id="loginError" class="login-error" hidden>密码错误，请重试</p>
       <button id="loginBtn" class="btn primary login-btn" type="button">进入</button>
+    </div>
+  </div>
+
+  <!-- ======== 批注列表弹窗 ======== -->
+  <div class="modal-mask" id="annoListMask" hidden>
+    <div class="modal modal-lg" role="dialog" aria-modal="true" aria-label="批注列表">
+      <header class="modal-head">
+        <div>
+          <h3>批注</h3>
+          <p id="annoListSub" class="modal-sub"></p>
+        </div>
+        <button class="icon-btn" type="button" data-close aria-label="关闭">✕</button>
+      </header>
+      <div id="annoList" class="anno-list-body"></div>
+      <footer class="modal-foot">
+        <span class="hint">点击某条批注定位到文档中的位置</span>
+        <div class="foot-actions">
+          <button class="btn ghost" type="button" data-close>关闭</button>
+        </div>
+      </footer>
+    </div>
+  </div>
+
+  <!-- ======== 批注详情弹窗 ======== -->
+  <div class="modal-mask" id="annoViewMask" hidden>
+    <div class="modal" role="dialog" aria-modal="true" aria-label="批注详情">
+      <header class="modal-head">
+        <div>
+          <h3>批注详情</h3>
+          <p id="annoViewQuote" class="modal-sub"></p>
+        </div>
+        <button class="icon-btn" type="button" data-close aria-label="关闭">✕</button>
+      </header>
+      <div id="annoViewBody" class="anno-view-body"></div>
+      <footer class="modal-foot">
+        <span id="annoViewHint" class="hint"></span>
+        <div class="foot-actions">
+          <button id="annoViewResolve" class="btn ghost" type="button">标记已解决</button>
+          <button id="annoViewDelete" class="btn ghost danger" type="button">删除批注</button>
+        </div>
+      </footer>
+    </div>
+  </div>
+
+  <!-- ======== 添加批注弹窗 ======== -->
+  <div class="modal-mask" id="annoMask" hidden>
+    <div class="modal" role="dialog" aria-modal="true" aria-label="添加批注">
+      <header class="modal-head">
+        <div>
+          <h3>添加批注</h3>
+          <p id="annoQuotePreview" class="modal-sub"></p>
+        </div>
+        <button class="icon-btn" type="button" data-close aria-label="关闭">✕</button>
+      </header>
+      <div class="anno-form">
+        <textarea id="annoContent" rows="4" placeholder="写下你的批注…" maxlength="2000"></textarea>
+        <div class="dir-row">
+          <input id="annoAuthor" type="text" placeholder="请输入你的名字" maxlength="50" autocomplete="off" spellcheck="false" />
+        </div>
+        <p class="form-hint">批注对所有人可见并可被回复; 选中文字将作为锚点高亮在文档中。Ctrl+Enter 快速提交。</p>
+      </div>
+      <footer class="modal-foot">
+        <span class="hint"></span>
+        <div class="foot-actions">
+          <button class="btn ghost" type="button" data-close>取消</button>
+          <button id="annoSubmit" class="btn primary" type="button">提交批注</button>
+        </div>
+      </footer>
     </div>
   </div>
 
