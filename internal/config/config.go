@@ -56,6 +56,11 @@ func Load(path string) (Config, error) {
 		_ = os.Rename(path, path+".bak") // 备份损坏文件, 防止覆盖丢失
 		return cfg, err
 	}
+	password, err := unprotectPassword(cfg.Password)
+	if err != nil {
+		return Default(), err
+	}
+	cfg.Password = password
 	return cfg, nil
 }
 
@@ -69,14 +74,44 @@ func Save(path string, cfg Config) error {
 	if len(dirs) > 0 {
 		cfg.DocsDir = dirs[0]
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return err
 	}
+	protected, err := protectPassword(cfg.Password)
+	if err != nil {
+		return err
+	}
+	cfg.Password = protected
 	data, err := json.MarshalIndent(cfg, "", "  ")
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(path, data, 0o644)
+	tmp := path + ".tmp"
+	f, err := os.OpenFile(tmp, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o600)
+	if err != nil {
+		return err
+	}
+	cleanup := true
+	defer func() {
+		_ = f.Close()
+		if cleanup {
+			_ = os.Remove(tmp)
+		}
+	}()
+	if _, err := f.Write(data); err != nil {
+		return err
+	}
+	if err := f.Sync(); err != nil {
+		return err
+	}
+	if err := f.Close(); err != nil {
+		return err
+	}
+	if err := os.Rename(tmp, path); err != nil {
+		return err
+	}
+	cleanup = false
+	return nil
 }
 
 // trimSpace 去空白(局部辅助)。

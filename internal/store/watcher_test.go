@@ -168,3 +168,20 @@ func TestSetRootRestartsWatcher(t *testing.T) {
 	treeHasPath(t, st, "x.md", true)
 	treeHasPath(t, st, "a.md", false)
 }
+
+func TestCloseStopsWatcher(t *testing.T) {
+	st, _ := newWatchStore(t)
+	if _, err := st.Tree(); err != nil {
+		t.Fatal(err)
+	}
+	if !st.watcherActive() {
+		t.Skip("当前平台不启用目录监听")
+	}
+
+	st.Close()
+	if st.watcherActive() {
+		t.Fatal("Close 后目录监听仍处于活动状态")
+	}
+	// Close 必须幂等，服务关闭路径可能重复调用。
+	st.Close()
+}

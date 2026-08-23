@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"docshare/internal/store"
@@ -114,6 +115,72 @@ func TestMultiRootDoc(t *testing.T) {
 	resp.Body.Close()
 	if resp.StatusCode != http.StatusNotFound {
 		t.Fatalf("未知根应 404, got %d", resp.StatusCode)
+	}
+}
+
+func TestMultiRootDuplicateNamesHaveUniqueRoutes(t *testing.T) {
+	base := t.TempDir()
+	makeStore := func(parent, filename, content string) *store.Store {
+		docs := filepath.Join(base, parent, "docs")
+		if err := os.MkdirAll(docs, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(docs, filename), []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		st, err := store.New(docs, filepath.Join(base, "data-"+parent))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return st
+	}
+
+	srv, err := NewMulti([]*store.Store{
+		makeStore("one", "one.md", "# One"),
+		makeStore("two", "two.md", "# Two"),
+	}, "", nil, nil, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+
+	resp, err := http.Get(ts.URL + "/api/tree")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	var tree struct {
+		Node struct {
+			Children []struct {
+				Name string `json:"name"`
+				Path string `json:"path"`
+			} `json:"children"`
+		} `json:"node"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&tree); err != nil {
+		t.Fatal(err)
+	}
+	if len(tree.Node.Children) != 2 {
+		t.Fatalf("应有两个根, got %d", len(tree.Node.Children))
+	}
+	first, second := tree.Node.Children[0], tree.Node.Children[1]
+	if first.Name != "docs" || second.Name != "docs" {
+		t.Fatalf("展示名称应保留目录名: %+v", tree.Node.Children)
+	}
+	if first.Path == second.Path {
+		t.Fatalf("同名根必须使用唯一路由 ID: %+v", tree.Node.Children)
+	}
+
+	for _, path := range []string{first.Path + "/one.md", second.Path + "/two.md"} {
+		res, err := http.Get(ts.URL + "/api/doc?path=" + path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		res.Body.Close()
+		if res.StatusCode != http.StatusOK {
+			t.Fatalf("读取 %s 应为 200, got %d", path, res.StatusCode)
+		}
 	}
 }
 
@@ -238,8 +305,8 @@ func TestFileTraversalRejected(t *testing.T) {
 	}
 }
 
-// ../ 一级: 允许访问根的直接父级内图片(如 ../img/x.png)
-func TestFileParentDirImage(t *testing.T) {
+// 根目录外资源即使只向上一级也必须拒绝，避免共享相邻目录中的敏感图片。
+func TestFileParentDirImageRejected(t *testing.T) {
 	ts, docs := imageServer(t)
 	defer ts.Close()
 	parent := filepath.Dir(docs)
@@ -248,28 +315,47 @@ func TestFileParentDirImage(t *testing.T) {
 	imgDir := filepath.Join(parent, "img")
 	_ = os.MkdirAll(imgDir, 0o755)
 	_ = os.WriteFile(filepath.Join(imgDir, "pic.png"), png, 0o644)
-	// 父级下的非图片(应拒绝)
+	// 父级下的非图片同样不可见
 	_ = os.WriteFile(filepath.Join(imgDir, "secret.txt"), []byte("x"), 0o644)
 
-	// ../img/pic.png → 200
+	// ../img/pic.png → 拒绝
 	resp, err := http.Get(ts.URL + "/api/file?path=..%2Fimg%2Fpic.png")
 	if err != nil {
 		t.Fatal(err)
 	}
 	resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("../img 图片应 200, got %d", resp.StatusCode)
+	if resp.StatusCode != http.StatusNotFound && resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("根外 ../img 图片应拒绝, got %d", resp.StatusCode)
 	}
-	// ../img/secret.txt → 403
+	// ../img/secret.txt → 拒绝
 	resp2, _ := http.Get(ts.URL + "/api/file?path=..%2Fimg%2Fsecret.txt")
 	resp2.Body.Close()
-	if resp2.StatusCode != http.StatusForbidden {
-		t.Fatalf("父级非图片应 403, got %d", resp2.StatusCode)
+	if resp2.StatusCode != http.StatusNotFound && resp2.StatusCode != http.StatusForbidden {
+		t.Fatalf("父级非图片应拒绝, got %d", resp2.StatusCode)
 	}
 	// ../../ 二级跳转 → 拒绝
 	resp3, _ := http.Get(ts.URL + "/api/file?path=..%2F..%2Fimg%2Fpic.png")
 	resp3.Body.Close()
 	if resp3.StatusCode != http.StatusNotFound && resp3.StatusCode != http.StatusForbidden {
 		t.Fatalf("二级跳转应被拒绝, got %d", resp3.StatusCode)
+	}
+}
+
+func TestSVGResponseIsSandboxed(t *testing.T) {
+	ts, docs := imageServer(t)
+	defer ts.Close()
+	if err := os.WriteFile(filepath.Join(docs, "diagram.svg"), []byte(`<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	resp, err := http.Get(ts.URL + "/api/file?path=diagram.svg")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("根内 SVG 应可作为图片读取, got %d", resp.StatusCode)
+	}
+	if csp := resp.Header.Get("Content-Security-Policy"); !strings.Contains(csp, "sandbox") || !strings.Contains(csp, "script-src 'none'") {
+		t.Fatalf("SVG 响应缺少沙箱 CSP: %q", csp)
 	}
 }

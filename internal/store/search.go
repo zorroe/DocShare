@@ -32,16 +32,18 @@ type SearchResult struct {
 type docEntry struct {
 	path     string
 	tokens   map[string]int // token -> 出现次数
+	content  string         // 索引正文；生成摘要无需再次读盘
 	modified time.Time
-	size    int64
+	size     int64
 }
 
 // SearchIndex 倒排索引。
 type SearchIndex struct {
-	mu    sync.RWMutex
-	docs  map[string]*docEntry // path -> entry
-	index map[string][]string  // token -> paths
-	built bool
+	mu         sync.RWMutex
+	docs       map[string]*docEntry // path -> entry
+	index      map[string][]string  // token -> paths
+	built      bool
+	generation uint64
 }
 
 func newSearchIndex() *SearchIndex {
@@ -85,7 +87,7 @@ func (idx *SearchIndex) addDoc(path string, content string, modified time.Time, 
 	for _, t := range tokens {
 		counts[t]++
 	}
-	entry := &docEntry{path: path, tokens: counts, modified: modified, size: size}
+	entry := &docEntry{path: path, tokens: counts, content: content, modified: modified, size: size}
 	if old, ok := idx.docs[path]; ok {
 		idx.removeDoc(old)
 	}
@@ -113,12 +115,17 @@ func (idx *SearchIndex) removeDoc(entry *docEntry) {
 
 // ensure 惰性构建/增量更新索引(校验文件 mtime)。
 func (s *Store) ensureIndex() {
+	s.ensureWatcher()
 	idx := s.searchIndex
 	idx.mu.Lock()
 	defer idx.mu.Unlock()
+	generation := s.searchGeneration.Load()
 
 	if !s.ready {
 		idx.built = false
+		return
+	}
+	if idx.built && s.watcherActive() && idx.generation == generation {
 		return
 	}
 
@@ -152,6 +159,7 @@ func (s *Store) ensureIndex() {
 			}
 		}
 		idx.built = true
+		idx.generation = generation
 		return
 	}
 
@@ -169,6 +177,7 @@ func (s *Store) ensureIndex() {
 			idx.removeDoc(idx.docs[p])
 		}
 	}
+	idx.generation = generation
 }
 
 func (idx *SearchIndex) indexFile(path string, info os.FileInfo) {
@@ -248,21 +257,18 @@ func (s *Store) Search(query string) ([]SearchResult, error) {
 		results = results[:50]
 	}
 
-	// 生成摘要片段(读文件定位首个命中词)
+	// 生成摘要片段(复用索引正文，避免每次查询重复读盘)
 	for i := range results {
 		abs := filepath.Join(s.root, filepath.FromSlash(results[i].Path))
-		results[i].Snippet = snippetOf(abs, query, tokens[0])
+		if entry := idx.docs[abs]; entry != nil {
+			results[i].Snippet = snippetOf(entry.content, query, tokens[0])
+		}
 	}
 	return results, nil
 }
 
 // snippetOf 生成命中上下文片段(约 100 字符)。
-func snippetOf(absPath, query, firstToken string) string {
-	data, err := os.ReadFile(absPath)
-	if err != nil {
-		return ""
-	}
-	content := string(data)
+func snippetOf(content, query, firstToken string) string {
 	lower := strings.ToLower(content)
 	// 优先定位完整查询词, 否则首个 token
 	pos := strings.Index(lower, strings.ToLower(query))

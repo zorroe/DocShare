@@ -2,6 +2,8 @@ package api
 
 import (
 	"encoding/json"
+	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -108,6 +110,19 @@ func TestAuthFlow(t *testing.T) {
 	}
 }
 
+func TestDesktopTokenAuthenticatesWithoutExposingPassword(t *testing.T) {
+	srv, ts := newRawServer(t, "desktop-secret")
+	defer ts.Close()
+	token := srv.DesktopToken()
+	if token == "" {
+		t.Fatal("启用密码时应生成桌面端令牌")
+	}
+	code, _ := getJSON(t, ts.URL+"/api/tree", token)
+	if code != http.StatusOK {
+		t.Fatalf("桌面端令牌应可认证, got %d", code)
+	}
+}
+
 func postJSON(t *testing.T, url, body, token string) (int, map[string]any) {
 	t.Helper()
 	req, _ := http.NewRequest("POST", url, strings.NewReader(body))
@@ -207,5 +222,137 @@ func TestAuthLockoutResetOnSuccess(t *testing.T) {
 	code, _ = postJSON(t, ts.URL+"/api/auth/login", `{"password":"secret-pass"}`, "")
 	if code != http.StatusOK {
 		t.Fatalf("计数清零后正确密码应 200, got %d", code)
+	}
+}
+
+func TestCORSAllowsOnlyDesktopShell(t *testing.T) {
+	ts := newTestServer(t, "")
+	defer ts.Close()
+
+	bad, _ := http.NewRequest(http.MethodGet, ts.URL+"/api/tree", nil)
+	bad.Header.Set("Origin", "https://evil.example")
+	badResp, err := http.DefaultClient.Do(bad)
+	if err != nil {
+		t.Fatal(err)
+	}
+	badResp.Body.Close()
+	if badResp.StatusCode != http.StatusForbidden {
+		t.Fatalf("未知跨域来源应被拒绝, got %d", badResp.StatusCode)
+	}
+	if got := badResp.Header.Get("Access-Control-Allow-Origin"); got != "" {
+		t.Fatalf("未知来源不应返回 CORS 放行头, got %q", got)
+	}
+
+	preflight, _ := http.NewRequest(http.MethodOptions, ts.URL+"/api/annotations/x", nil)
+	preflight.Header.Set("Origin", "http://wails.localhost")
+	preflight.Header.Set("Access-Control-Request-Method", http.MethodDelete)
+	allowedResp, err := http.DefaultClient.Do(preflight)
+	if err != nil {
+		t.Fatal(err)
+	}
+	allowedResp.Body.Close()
+	if allowedResp.StatusCode != http.StatusNoContent {
+		t.Fatalf("桌面壳预检应成功, got %d", allowedResp.StatusCode)
+	}
+	if got := allowedResp.Header.Get("Access-Control-Allow-Origin"); got != "http://wails.localhost" {
+		t.Fatalf("桌面壳来源未被精确放行: %q", got)
+	}
+	if methods := allowedResp.Header.Get("Access-Control-Allow-Methods"); !strings.Contains(methods, http.MethodDelete) {
+		t.Fatalf("CORS 方法缺少 DELETE: %q", methods)
+	}
+}
+
+func TestSecurityHeaders(t *testing.T) {
+	ts := newTestServer(t, "")
+	defer ts.Close()
+	resp, err := http.Get(ts.URL + "/api/health")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	for name, want := range map[string]string{
+		"X-Content-Type-Options": "nosniff",
+		"X-Frame-Options":        "DENY",
+		"Referrer-Policy":        "no-referrer",
+	} {
+		if got := resp.Header.Get(name); got != want {
+			t.Errorf("%s = %q, want %q", name, got, want)
+		}
+	}
+	if csp := resp.Header.Get("Content-Security-Policy"); !strings.Contains(csp, "default-src 'self'") {
+		t.Fatalf("缺少 CSP: %q", csp)
+	}
+}
+
+func TestAuthLoginRejectsOversizedBody(t *testing.T) {
+	ts := newTestServer(t, "secret-pass")
+	defer ts.Close()
+	body := `{"password":"` + strings.Repeat("x", 70<<10) + `"}`
+	code, _ := postJSON(t, ts.URL+"/api/auth/login", body, "")
+	if code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("超大请求体应返回 413, got %d", code)
+	}
+}
+
+func TestAuthLoginRejectsTrailingJSON(t *testing.T) {
+	ts := newTestServer(t, "secret-pass")
+	defer ts.Close()
+	code, _ := postJSON(t, ts.URL+"/api/auth/login", `{"password":"secret-pass"}{}`, "")
+	if code != http.StatusBadRequest {
+		t.Fatalf("连续 JSON 值应返回 400, got %d", code)
+	}
+}
+
+func TestVersionedStaticAssetsAreCacheable(t *testing.T) {
+	dir := t.TempDir()
+	docs := filepath.Join(dir, "docs")
+	if err := os.MkdirAll(docs, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	st, err := store.New(docs, filepath.Join(dir, "data"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(st.Close)
+	srv, err := New(st, "", WebFS, nil, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+
+	asset, err := http.Get(ts.URL + "/vendor/mermaid.min.js?v=1.4.0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	asset.Body.Close()
+	if cache := asset.Header.Get("Cache-Control"); !strings.Contains(cache, "immutable") {
+		t.Fatalf("版本化静态资源应长期缓存: %q", cache)
+	}
+
+	index, err := http.Get(ts.URL + "/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	indexBody, err := io.ReadAll(index.Body)
+	index.Body.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cache := index.Header.Get("Cache-Control"); strings.Contains(cache, "no-store") || !strings.Contains(cache, "no-cache") {
+		t.Fatalf("入口页应可重验证但不可永久缓存: %q", cache)
+	}
+	if strings.Contains(string(indexBody), `src="vendor/mermaid.min.js`) {
+		t.Fatal("入口页不应预加载 Mermaid")
+	}
+}
+
+func TestLoginFailureTrackingIsBounded(t *testing.T) {
+	s := &Server{lockFails: map[string]*loginLock{}, lockSec: loginLockSec}
+	for i := 0; i < maxLoginLocks*2; i++ {
+		s.recordFail(fmt.Sprintf("192.0.2.%d", i))
+	}
+	if got := len(s.lockFails); got > maxLoginLocks {
+		t.Fatalf("登录失败记录应有上限: got %d, want <= %d", got, maxLoginLocks)
 	}
 }

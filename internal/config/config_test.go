@@ -3,6 +3,8 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"runtime"
+	"strings"
 	"testing"
 )
 
@@ -27,6 +29,32 @@ func TestSaveLoad(t *testing.T) {
 	}
 	if got.Password != "pw" {
 		t.Fatalf("密码加载错误: %q", got.Password)
+	}
+}
+
+func TestSaveProtectsPasswordAtRest(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("DPAPI 仅适用于 Windows 桌面端")
+	}
+	path := filepath.Join(t.TempDir(), "config.json")
+	cfg := Default()
+	cfg.Password = "super-secret-password"
+	if err := Save(path, cfg); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(raw), cfg.Password) {
+		t.Fatal("配置文件不应包含明文密码")
+	}
+	loaded, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.Password != cfg.Password {
+		t.Fatalf("解密后的密码不一致: %q", loaded.Password)
 	}
 }
 

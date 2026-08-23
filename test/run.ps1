@@ -11,11 +11,15 @@ $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent $PSScriptRoot
 Set-Location $root
 
-# 1. 依赖: puppeteer-core
-if (-not (Test-Path "$PSScriptRoot\node_modules\puppeteer-core")) {
+# 1. 依赖: puppeteer-core(已安装版本必须与锁文件一致)
+$expectedPuppeteer = node -p "require('./test/package-lock.json').packages['node_modules/puppeteer-core'].version"
+$installedPuppeteer = if (Test-Path "$PSScriptRoot\node_modules\puppeteer-core\package.json") {
+    (Get-Content "$PSScriptRoot\node_modules\puppeteer-core\package.json" -Raw | ConvertFrom-Json).version
+} else { "" }
+if ($installedPuppeteer -ne $expectedPuppeteer) {
     Write-Host "[1/4] 安装测试依赖 (puppeteer-core)..." -ForegroundColor Cyan
     Push-Location $PSScriptRoot
-    npm install --no-audit --no-fund
+    npm ci --no-audit --no-fund --registry=https://registry.npmjs.org/
     if ($LASTEXITCODE -ne 0) { Pop-Location; exit 1 }
     Pop-Location
 }

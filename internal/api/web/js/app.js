@@ -71,6 +71,7 @@ const state = {
   serverInfo: null,
   collapsedDirs: new Set(), // 用户手动折叠的目录(树刷新时恢复)
   authToken: store.getItem('docshare-auth') || '',
+  passwordChanged: false,
   authEnabled: false,
   docsDirs: [],
   recent: (() => { try { return JSON.parse(store.getItem('docshare-recent') || '[]'); } catch { return []; } })(),
@@ -218,13 +219,13 @@ async function checkAuth() {
     state.authToken = store.getItem('docshare-auth') || '';
     return true;
   }
-  // 未认证: 桌面端自动登录(管理员密码), 否则显示登录遮罩
-  if (DESKTOP && state.serverInfo && state.serverInfo.password) {
+  // 未认证: 桌面壳使用后端签发的令牌，绝不接触明文访问密码。
+  if (DESKTOP && state.serverInfo && state.serverInfo.authToken) {
     try {
-      const res = await api('/api/auth/login', { noAuth: true, method: 'POST', body: { password: state.serverInfo.password } });
-      state.authToken = res.token;
-      store.setItem('docshare-auth', res.token);
-      return true;
+      state.authToken = state.serverInfo.authToken;
+      store.setItem('docshare-auth', state.authToken);
+      const verified = await api('/api/auth/status');
+      if (verified.authed) return true;
     } catch { /* 自动登录失败则走遮罩 */ }
   }
   showLogin();
@@ -307,12 +308,29 @@ marked.use({
 
 let mermaidSeq = 0;
 const mermaidSources = new Map(); // id -> 源码(主题切换时重渲染)
+let mermaidLoadPromise;
+
+function loadMermaid() {
+  if (window.mermaid) return Promise.resolve(window.mermaid);
+  if (!mermaidLoadPromise) {
+    mermaidLoadPromise = new Promise((resolve, reject) => {
+      const script = document.createElement('script');
+      script.src = 'vendor/mermaid.min.js?v=1.4.0';
+      script.onload = () => window.mermaid
+        ? resolve(window.mermaid)
+        : reject(new Error('Mermaid 初始化失败'));
+      script.onerror = () => reject(new Error('Mermaid 加载失败'));
+      document.head.appendChild(script);
+    });
+  }
+  return mermaidLoadPromise;
+}
 
 // 初始化 Mermaid(跟随页面主题)
-function initMermaid() {
-  if (typeof mermaid === 'undefined') return;
+function initMermaid(instance = window.mermaid) {
+  if (!instance) return;
   const isDark = (document.documentElement.dataset.theme || 'dark') === 'dark';
-  mermaid.initialize({
+  instance.initialize({
     startOnLoad: false,
     theme: isDark ? 'dark' : 'default',
     securityLevel: 'strict',
@@ -321,8 +339,10 @@ function initMermaid() {
 
 // 渲染 Mermaid 图表(替换 ```mermaid 代码块)
 async function renderMermaid(container) {
-  if (typeof mermaid === 'undefined') return;
   const blocks = container.querySelectorAll('pre code.language-mermaid');
+  if (!blocks.length) return;
+  const instance = await loadMermaid();
+  initMermaid(instance);
   for (const code of blocks) {
     const pre = code.closest('pre');
     const src = code.textContent;
@@ -333,7 +353,7 @@ async function renderMermaid(container) {
     div.textContent = src;
     pre.replaceWith(div);
     try {
-      const { svg } = await mermaid.render(id, src);
+      const { svg } = await instance.render(id, src);
       div.innerHTML = svg;
       mermaidSources.set(id, src);
     } catch (e) {
@@ -343,14 +363,16 @@ async function renderMermaid(container) {
 }
 
 // 主题切换后重渲染当前文档的 Mermaid 图表
-function rerenderMermaid() {
-  if (typeof mermaid === 'undefined' || !state.currentDoc) return;
+async function rerenderMermaid() {
+  if (!state.currentDoc || !mermaidSources.size) return;
+  const instance = await loadMermaid();
+  initMermaid(instance);
   document.querySelectorAll('#docView .mermaid[data-mermaid-id]').forEach(async (div) => {
     const src = mermaidSources.get(div.dataset.mermaidId);
     if (!src) return;
     try {
       const id = div.dataset.mermaidId;
-      const { svg } = await mermaid.render(id, src);
+      const { svg } = await instance.render(id, src);
       div.innerHTML = svg;
     } catch { /* 保留旧图 */ }
   });
@@ -443,7 +465,6 @@ function setTheme(t) {
   state.theme = t;
   store.setItem('docshare-theme', t);
   applyTheme();
-  initMermaid();
   rerenderMermaid();
 }
 
@@ -1704,7 +1725,11 @@ async function openSettings() {
     els.setLan.checked = !!info.lan;
     els.lanUrlText.textContent = info.lanUrl || '';
     els.setBlacklist.value = (info.blacklist || []).join('\n');
-    els.setPassword.value = info.password || '';
+    els.setPassword.value = '';
+    els.setPassword.placeholder = info.passwordConfigured
+      ? '已设置访问密码；留空保持不变'
+      : '留空 = 不启用（所有访客免密访问）';
+    state.passwordChanged = false;
     // 版本号由后端下发(设置面板初始显示)
     if (info.version) {
       els.updateStatus.innerHTML = `当前版本 <code>${esc(info.version)}</code>`;
@@ -1727,7 +1752,10 @@ async function saveSettings() {
   els.saveSettingsBtn.disabled = true;
   els.settingsStatus.textContent = '应用配置中…';
   try {
-    const info = await window.go.main.App.SaveConfig(state.docsDirs.slice(), port, els.setLan.checked, blacklist, password);
+    const info = await window.go.main.App.SaveConfig(
+      state.docsDirs.slice(), port, els.setLan.checked, blacklist, password, state.passwordChanged,
+    );
+    state.passwordChanged = false;
     els.settingsStatus.textContent = '已保存，服务已重启';
     toast('配置已保存，服务已重启');
     setTimeout(() => { if (info.running) location.reload(); }, 500);
@@ -1914,7 +1942,6 @@ function bindModals() {
    ============================================================ */
 async function init() {
   applyTheme();
-  initMermaid();
   bindModals();
   createTocFab();
   bindExport();
@@ -1938,7 +1965,6 @@ async function init() {
   window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {
     if (state.theme === 'auto') {
       applyTheme();
-      initMermaid();
       rerenderMermaid();
     }
   });
@@ -1996,6 +2022,7 @@ async function init() {
       els.setPassword.type = show ? 'text' : 'password';
       els.pwdToggle.innerHTML = show ? ICONS.eyeOff : ICONS.eye;
     });
+    els.setPassword.addEventListener('input', () => { state.passwordChanged = true; });
   } else {
     // 网页端: 管理按钮与菜单从 DOM 中彻底移除
     if (els.menuBtn) els.menuBtn.remove();

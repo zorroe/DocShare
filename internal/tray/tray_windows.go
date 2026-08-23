@@ -18,17 +18,17 @@ import (
 
 // ---- win32 常量 ----
 const (
-	wmApp          = 0x8000 // WM_APP
-	wmTray         = wmApp + 1
-	wmQuit         = 0x0012
-	wmClose        = 0x0010
-	wmRButtonUp    = 0x0205
+	wmApp           = 0x8000 // WM_APP
+	wmTray          = wmApp + 1
+	wmQuit          = 0x0012
+	wmClose         = 0x0010
+	wmRButtonUp     = 0x0205
 	wmLButtonDblClk = 0x0203
-	wmSysCommand   = 0x0112
-	scMinimize     = 0xF020
-	swHide         = 0
-	swRestore      = 9
-	gwlpWndProc    = 0xFFFFFFFFFFFFFFFC // -4, 64 位 GetWindowLongPtr 索引
+	wmSysCommand    = 0x0112
+	scMinimize      = 0xF020
+	swHide          = 0
+	swRestore       = 9
+	gwlpWndProc     = 0xFFFFFFFFFFFFFFFC // -4, 64 位 GetWindowLongPtr 索引
 
 	nimAdd    = 0
 	nimDelete = 2
@@ -57,8 +57,8 @@ const (
 	classStyle = 0
 
 	// 剪贴板
-	gmemMoveable   = 0x0002
-	cfUnicodeText  = 13
+	gmemMoveable  = 0x0002
+	cfUnicodeText = 13
 )
 
 // ---- 结构体 ----
@@ -90,21 +90,21 @@ type wndClassExW struct {
 
 // notifyIconDataW 仅声明到 V2 尺寸(SzTip + SzInfo 等), cbSize 用 V2 大小
 type notifyIconDataW struct {
-	cbSize          uint32
-	hWnd            windows.HWND
-	uID             uint32
-	uFlags          uint32
+	cbSize           uint32
+	hWnd             windows.HWND
+	uID              uint32
+	uFlags           uint32
 	uCallbackMessage uint32
-	hIcon           windows.Handle
-	szTip           [128]uint16
-	dwState         uint32
-	dwStateMask     uint32
-	szInfo          [256]uint16
-	uTimeout        uint32
-	szTitle         [64]uint16
-	dwInfoFlags     uint32
-	guidItem        windows.GUID
-	hBalloonIcon    windows.Handle
+	hIcon            windows.Handle
+	szTip            [128]uint16
+	dwState          uint32
+	dwStateMask      uint32
+	szInfo           [256]uint16
+	uTimeout         uint32
+	szTitle          [64]uint16
+	dwInfoFlags      uint32
+	guidItem         windows.GUID
+	hBalloonIcon     windows.Handle
 }
 
 // ---- LazyDLL 绑定 ----
@@ -150,15 +150,15 @@ var (
 // ---- Tray ----
 // Tray 管理托盘生命周期。Start 后必须调用 Stop 清理。
 type Tray struct {
-	mu          sync.Mutex
-	aux         windows.HWND // 辅助隐藏窗口(托盘宿主)
-	mainHWND    windows.HWND // 主应用窗口
-	oldWndProc  atomic.Uintptr // 主窗口原窗口过程
-	notifyAdded atomic.Bool
+	mu           sync.Mutex
+	aux          windows.HWND   // 辅助隐藏窗口(托盘宿主)
+	mainHWND     windows.HWND   // 主应用窗口
+	oldWndProc   atomic.Uintptr // 主窗口原窗口过程
+	notifyAdded  atomic.Bool
 	notifiedOnce atomic.Bool
-	icon        windows.Handle // 托盘图标句柄
-	quitFn      func()         // 托盘"退出"回调
-	copyText    atomic.Value   // 托盘"复制访问地址"内容(string)
+	icon         windows.Handle // 托盘图标句柄
+	quitFn       func()         // 托盘"退出"回调
+	copyText     atomic.Value   // 托盘"复制访问地址"内容(string)
 }
 
 var callbackRefs []uintptr // 保持 Go 回调引用

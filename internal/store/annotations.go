@@ -45,8 +45,8 @@ type Reply struct {
 // Annotation 一条批注(含回复线程)。
 type Annotation struct {
 	ID       string  `json:"id"`
-	Doc      string  `json:"doc"`   // 文档路径(与 /api/doc 的 path 一致, 多根时含根前缀)
-	Quote    string  `json:"quote"` // 选中文本(定位用)
+	Doc      string  `json:"doc"`    // 文档路径(与 /api/doc 的 path 一致, 多根时含根前缀)
+	Quote    string  `json:"quote"`  // 选中文本(定位用)
 	Offset   int     `json:"offset"` // 选中文本在文档纯文本中的起始偏移(辅助定位)
 	Author   string  `json:"author"`
 	Content  string  `json:"content"`

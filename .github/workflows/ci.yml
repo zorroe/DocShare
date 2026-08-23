@@ -1,0 +1,55 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: windows-latest
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v5
+
+      - name: 安装 Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: '1.25.x'
+          cache: true
+
+      - name: 安装 Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: test/package-lock.json
+
+      - name: 检查格式与版本
+        shell: pwsh
+        run: |
+          $unformatted = gofmt -l (git ls-files '*.go')
+          if ($unformatted) {
+            Write-Host "Go 文件未格式化:`n$unformatted" -ForegroundColor Red
+            exit 1
+          }
+          ./tools/check-version.ps1
+
+      - name: Go 静态检查与测试
+        shell: pwsh
+        run: |
+          go vet ./...
+          go test -race ./...
+
+      - name: 安装并审计 UI 测试依赖
+        shell: pwsh
+        run: |
+          npm ci --prefix test --registry=https://registry.npmjs.org/
+          npm audit --prefix test --omit=dev --audit-level=high --registry=https://registry.npmjs.org/
+
+      - name: UI 冒烟测试
+        shell: pwsh
+        run: ./test/run.ps1

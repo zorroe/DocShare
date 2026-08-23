@@ -6,6 +6,6 @@ package store
 type dirWatcher struct{}
 
 func newDirWatcher(root string, onEvent func()) *dirWatcher { return nil }
-func (w *dirWatcher) start()                                 {}
-func (w *dirWatcher) stop()                                  {}
-func (w *dirWatcher) active() bool                           { return false }
+func (w *dirWatcher) start()                                {}
+func (w *dirWatcher) stop()                                 {}
+func (w *dirWatcher) active() bool                          { return false }

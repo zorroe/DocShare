@@ -21,26 +21,38 @@ var (
 
 // Node 文档目录树节点。
 type Node struct {
-	Name     string `json:"name"`
-	Path     string `json:"path"`
-	IsDir    bool   `json:"isDir"`
-	Size     int64  `json:"size,omitempty"`
-	Modified string `json:"modified,omitempty"`
+	Name     string  `json:"name"`
+	Path     string  `json:"path"`
+	IsDir    bool    `json:"isDir"`
+	Size     int64   `json:"size,omitempty"`
+	Modified string  `json:"modified,omitempty"`
 	Children []*Node `json:"children,omitempty"`
 }
 
 // Store 持有文档根目录与数据目录。
 type Store struct {
-	root        string // 文档根目录(绝对路径)
-	dataDir     string // 数据目录(访问记录存档)
-	ready       bool   // 文档目录是否可用
-	searchIndex *SearchIndex
+	root             string // 文档根目录(绝对路径)
+	dataDir          string // 数据目录(访问记录存档)
+	ready            bool   // 文档目录是否可用
+	searchIndex      *SearchIndex
+	searchGeneration atomic.Uint64 // 文件事件代数；搜索索引只在代数变化时校验磁盘
 
 	treeMu    sync.Mutex
 	treeDirty atomic.Bool // 目录变更监听置脏后为 true, 下次 Tree() 重建缓存
 	treeCache *Node       // 目录树缓存(监听生效期间复用, 避免每 3 秒全量扫描)
 	watchMu   sync.Mutex
 	watcher   *dirWatcher // 目录变更监听(Windows); 其余平台为 nil(始终全量扫描)
+
+	accessMu      sync.Mutex
+	accessLoaded  bool
+	accessRecords []AccessRecord
+	accessOnce    sync.Once
+	accessFlush   chan struct{}
+	accessStop    chan struct{}
+	accessWG      sync.WaitGroup
+	accessStarted atomic.Bool
+	closed        atomic.Bool
+	accessLifeMu  sync.Mutex
 }
 
 // New 创建 Store; 文档目录不存在时进入未配置状态(服务可启动, 目录树为空)。
@@ -50,10 +62,11 @@ func New(root, dataDir string) (*Store, error) {
 		return nil, fmt.Errorf("解析文档目录失败: %w", err)
 	}
 	st := &Store{root: absRoot, dataDir: dataDir, searchIndex: newSearchIndex()}
+	st.searchGeneration.Store(1)
 	if info, err := os.Stat(absRoot); err == nil && info.IsDir() {
 		st.ready = true
 	}
-	if err := os.MkdirAll(dataDir, 0o755); err != nil {
+	if err := os.MkdirAll(dataDir, 0o700); err != nil {
 		return nil, fmt.Errorf("创建数据目录失败: %w", err)
 	}
 	return st, nil
@@ -76,6 +89,7 @@ func (s *Store) SetRoot(root string) error {
 	}
 	s.root = absRoot
 	s.ready = true
+	s.searchGeneration.Add(1)
 	s.restartWatcher()
 	return nil
 }
@@ -94,14 +108,41 @@ func (s *Store) restartWatcher() {
 	s.treeMu.Unlock()
 }
 
+// Close 释放目录监听资源。可重复调用。
+func (s *Store) Close() {
+	s.accessLifeMu.Lock()
+	if !s.closed.CompareAndSwap(false, true) {
+		s.accessLifeMu.Unlock()
+		return
+	}
+	s.watchMu.Lock()
+	w := s.watcher
+	s.watcher = nil
+	s.watchMu.Unlock()
+	if w != nil {
+		w.stop()
+	}
+	accessStarted := s.accessStarted.Load()
+	if accessStarted {
+		close(s.accessStop)
+	}
+	s.accessLifeMu.Unlock()
+	if accessStarted {
+		s.accessWG.Wait()
+	}
+}
+
 // ensureWatcher 惰性启动目录变更监听(仅 Windows)。
 func (s *Store) ensureWatcher() {
 	s.watchMu.Lock()
 	defer s.watchMu.Unlock()
-	if s.watcher != nil {
+	if s.closed.Load() || s.watcher != nil {
 		return
 	}
-	w := newDirWatcher(s.root, func() { s.treeDirty.Store(true) })
+	w := newDirWatcher(s.root, func() {
+		s.treeDirty.Store(true)
+		s.searchGeneration.Add(1)
+	})
 	if w == nil {
 		return // 非 Windows 平台
 	}
@@ -284,58 +325,107 @@ const (
 	accessLimit = 200 // 默认返回条数
 )
 
-var accessMu sync.Mutex
-
 func (s *Store) accessFile() string {
 	return filepath.Join(s.dataDir, "access.json")
 }
 
-func (s *Store) loadAccess() []AccessRecord {
+func (s *Store) loadAccessLocked() {
+	if s.accessLoaded {
+		return
+	}
+	s.accessLoaded = true
 	data, err := os.ReadFile(s.accessFile())
 	if err != nil {
-		return nil
+		return
 	}
-	var list []AccessRecord
-	if json.Unmarshal(data, &list) != nil {
-		return nil
+	if json.Unmarshal(data, &s.accessRecords) != nil {
+		s.accessRecords = nil
 	}
-	return list
 }
 
 // RecordAccess 记录一次文档访问(文档浏览成功后调用)。
 func (s *Store) RecordAccess(doc, ip, ua string) {
-	accessMu.Lock()
-	defer accessMu.Unlock()
+	s.accessLifeMu.Lock()
+	defer s.accessLifeMu.Unlock()
+	if s.closed.Load() {
+		return
+	}
+	s.startAccessWriter()
+	s.accessMu.Lock()
+	s.loadAccessLocked()
 	if len(ua) > 140 {
 		ua = ua[:140]
 	}
-	list := s.loadAccess()
-	list = append([]AccessRecord{{
+	s.accessRecords = append([]AccessRecord{{
 		Time: time.Now().Format(time.RFC3339),
 		Doc:  doc,
 		IP:   ip,
 		UA:   ua,
-	}}, list...)
-	if len(list) > accessMax {
-		list = list[:accessMax]
+	}}, s.accessRecords...)
+	if len(s.accessRecords) > accessMax {
+		s.accessRecords = s.accessRecords[:accessMax]
 	}
-	data, err := json.MarshalIndent(list, "", "  ")
+	s.accessMu.Unlock()
+	select {
+	case s.accessFlush <- struct{}{}:
+	default: // 已有待写信号；批处理会落盘最新快照。
+	}
+}
+
+func (s *Store) startAccessWriter() {
+	s.accessOnce.Do(func() {
+		s.accessFlush = make(chan struct{}, 1)
+		s.accessStop = make(chan struct{})
+		s.accessStarted.Store(true)
+		s.accessWG.Add(1)
+		go func() {
+			defer s.accessWG.Done()
+			ticker := time.NewTicker(250 * time.Millisecond)
+			defer ticker.Stop()
+			dirty := false
+			for {
+				select {
+				case <-s.accessFlush:
+					dirty = true
+				case <-ticker.C:
+					if dirty {
+						s.persistAccess()
+						dirty = false
+					}
+				case <-s.accessStop:
+					s.persistAccess()
+					return
+				}
+			}
+		}()
+	})
+}
+
+func (s *Store) persistAccess() {
+	s.accessMu.Lock()
+	data, err := json.Marshal(s.accessRecords)
+	s.accessMu.Unlock()
 	if err != nil {
 		return
 	}
-	_ = os.WriteFile(s.accessFile(), data, 0o644)
+	tmp := s.accessFile() + ".tmp"
+	if err := os.WriteFile(tmp, data, 0o600); err == nil {
+		_ = os.Rename(tmp, s.accessFile())
+	}
 }
 
 // ListAccess 返回最近 N 条访问记录。
 func (s *Store) ListAccess(limit int) []AccessRecord {
-	accessMu.Lock()
-	defer accessMu.Unlock()
+	s.accessMu.Lock()
+	defer s.accessMu.Unlock()
+	s.loadAccessLocked()
 	if limit <= 0 || limit > accessMax {
 		limit = accessLimit
 	}
-	list := s.loadAccess()
-	if len(list) > limit {
-		list = list[:limit]
+	if len(s.accessRecords) < limit {
+		limit = len(s.accessRecords)
 	}
-	return list
+	out := make([]AccessRecord, limit)
+	copy(out, s.accessRecords[:limit])
+	return out
 }

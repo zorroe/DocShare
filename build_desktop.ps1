@@ -3,7 +3,7 @@
 #  产物:
 #    release\DocShare.exe        便携版(单文件)
 #    release\DocShare-Setup.exe  安装版(NSIS, 需安装 NSIS: winget install NSIS.NSIS)
-#  依赖: Go 1.22+ (https://go.dev/dl/) + WebView2 (Win10/11 自带)
+#  依赖: Go 1.25+ (https://go.dev/dl/) + WebView2 (Win10/11 自带)
 # ============================================================
 $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent $MyInvocation.MyCommand.Path

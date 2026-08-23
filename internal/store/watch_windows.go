@@ -29,9 +29,9 @@ type dirWatcher struct {
 	onEvent   func() // 任意变更回调(置脏)
 	stopEvent windows.Handle
 
-	mu     sync.Mutex
-	dirs   map[string]windows.Handle // 已监听目录 -> 句柄
-	wg     sync.WaitGroup            // 所有监听 goroutine
+	mu      sync.Mutex
+	dirs    map[string]windows.Handle // 已监听目录 -> 句柄
+	wg      sync.WaitGroup            // 所有监听 goroutine
 	started atomic.Bool
 	stopped atomic.Bool
 }

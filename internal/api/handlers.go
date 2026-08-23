@@ -15,6 +15,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"path"
 	"path/filepath"
@@ -27,26 +28,30 @@ import (
 
 // Server 聚合 HTTP 处理所需依赖。
 type Server struct {
-	stores     []*store.Store // 文档存储(支持多根目录)
-	frontDir   string         // 磁盘前端目录(可选, 调试用); 为空时使用内嵌资源
-	webFS      fs.FS          // 内嵌前端资源
-	blacklist  []string       // IP 黑名单(精确 IP 或 CIDR)
-	password   string         // 只读访问密码(空 = 不启用)
-	authSecret []byte         // 会话令牌签名密钥
+	stores     []*store.Store          // 文档存储(支持多根目录)
+	rootIDs    map[*store.Store]string // 多根路由 ID(同名目录自动消歧)
+	frontDir   string                  // 磁盘前端目录(可选, 调试用); 为空时使用内嵌资源
+	webFS      fs.FS                   // 内嵌前端资源
+	blacklist  []string                // IP 黑名单(精确 IP 或 CIDR)
+	password   string                  // 只读访问密码(空 = 不启用)
+	authSecret []byte                  // 会话令牌签名密钥
 
-	lockMu   sync.Mutex              // 登录失败锁定
-	lockFails map[string]*loginLock  // IP -> 失败计数/锁定期
-	lockSec  int                     // 连续失败 N 次后锁定秒数(0 = 不锁定)
+	lockMu    sync.Mutex            // 登录失败锁定
+	lockFails map[string]*loginLock // IP -> 失败计数/锁定期
+	lockSec   int                   // 连续失败 N 次后锁定秒数(0 = 不锁定)
 }
 
 const (
 	loginMaxFails = 5  // 连续失败次数阈值
 	loginLockSec  = 30 // 默认锁定时长(秒)
+	maxLoginLocks = 1024
+	loginLockTTL  = 15 * time.Minute
 )
 
 type loginLock struct {
 	count int
 	until time.Time
+	last  time.Time
 }
 
 // New 创建单根 Server(兼容旧签名)。
@@ -60,7 +65,20 @@ func NewMulti(stores []*store.Store, frontDir string, webFS fs.FS, blacklist []s
 	if len(stores) == 0 {
 		return nil, errors.New("至少需要一个文档存储")
 	}
-	s := &Server{stores: stores, webFS: webFS, password: password, lockFails: map[string]*loginLock{}, lockSec: loginLockSec}
+	s := &Server{
+		stores: stores, rootIDs: make(map[*store.Store]string, len(stores)),
+		webFS: webFS, password: password, lockFails: map[string]*loginLock{}, lockSec: loginLockSec,
+	}
+	usedRootIDs := make(map[string]bool, len(stores))
+	for _, st := range stores {
+		base := rootName(st)
+		id := base
+		for suffix := 2; usedRootIDs[id]; suffix++ {
+			id = fmt.Sprintf("%s-%d", base, suffix)
+		}
+		usedRootIDs[id] = true
+		s.rootIDs[st] = id
+	}
 	if s.password != "" {
 		b := make([]byte, 16)
 		if _, err := rand.Read(b); err != nil {
@@ -119,6 +137,13 @@ func rootName(st *store.Store) string {
 	return name
 }
 
+func (s *Server) rootID(st *store.Store) string {
+	if id := s.rootIDs[st]; id != "" {
+		return id
+	}
+	return rootName(st)
+}
+
 // resolveStore 将请求路径路由到对应 store:
 // 多根模式路径形如 "根名/相对路径", 首段匹配根名; 无匹配回落首个 store。
 func (s *Server) resolveStore(path string) (*store.Store, string) {
@@ -132,7 +157,7 @@ func (s *Server) resolveStore(path string) (*store.Store, string) {
 		first, rest = path[:idx], path[idx+1:]
 	}
 	for _, st := range s.stores {
-		if rootName(st) == first {
+		if s.rootID(st) == first {
 			return st, rest
 		}
 	}
@@ -144,7 +169,7 @@ func (s *Server) rootPrefix(st *store.Store, rel string) string {
 	if len(s.stores) == 1 {
 		return rel
 	}
-	return rootName(st) + "/" + rel
+	return s.rootID(st) + "/" + rel
 }
 
 // ---- 文档内图片等静态资源 ----
@@ -177,43 +202,8 @@ func (s *Server) resolveAbsolute(p string) string {
 	return ""
 }
 
-// resolveDocAsset 解析文档内资源路径(允许 ../ 一级):
-// 目标可位于文档根内, 或根的直接父目录内(如 ../img/x.png 引用兄弟目录图片)。
-// 始终做符号链接校验, 防止逃逸出根与根父级。
-func (s *Server) resolveDocAsset(st *store.Store, rel string) (string, bool) {
-	base := filepath.Clean(st.Root())
-	parent := filepath.Dir(base)
-	candidate := filepath.Clean(filepath.Join(base, filepath.FromSlash(rel)))
-
-	// 目标必须位于根内或根的直接父级内(../ 只允许一级)
-	if candidate != base && candidate != parent &&
-		!strings.HasPrefix(candidate, base+string(os.PathSeparator)) &&
-		!strings.HasPrefix(candidate, parent+string(os.PathSeparator)) {
-		return "", false
-	}
-	// 符号链接校验: 解析结果不能逃出根或根父级
-	baseR, err := filepath.EvalSymlinks(base)
-	if err != nil {
-		baseR = base
-	}
-	parentR, err := filepath.EvalSymlinks(parent)
-	if err != nil {
-		parentR = parent
-	}
-	resolved, err := filepath.EvalSymlinks(candidate)
-	if err != nil {
-		return "", false
-	}
-	inBase := resolved == baseR || strings.HasPrefix(resolved, baseR+string(os.PathSeparator))
-	inParent := resolved == parentR || strings.HasPrefix(resolved, parentR+string(os.PathSeparator))
-	if !inBase && !inParent {
-		return "", false
-	}
-	return resolved, true
-}
-
 // handleFile 提供 Markdown 文档内的图片资源。
-// path 支持: 相对路径(多根时含根前缀, 允许 ../ 一级) / 文档根内的本地绝对路径。
+// path 支持: 相对路径(多根时含根前缀) / 文档根内的本地绝对路径。
 func (s *Server) handleFile(w http.ResponseWriter, r *http.Request) {
 	p := strings.TrimSpace(r.URL.Query().Get("path"))
 	if p == "" {
@@ -227,12 +217,6 @@ func (s *Server) handleFile(w http.ResponseWriter, r *http.Request) {
 		// 2) 本地绝对路径(必须位于某文档根内)
 		full = s.resolveAbsolute(p)
 		if full == "" {
-			// 3) ../ 相对路径: 允许访问根的直接父级内资源(如图片目录)
-			if f, ok := s.resolveDocAsset(st, rel); ok {
-				full = f
-			}
-		}
-		if full == "" {
 			writeErr(w, http.StatusNotFound, "文件不存在: "+p)
 			return
 		}
@@ -240,6 +224,10 @@ func (s *Server) handleFile(w http.ResponseWriter, r *http.Request) {
 	if !imageExts[strings.ToLower(filepath.Ext(full))] {
 		writeErr(w, http.StatusForbidden, "仅支持图片资源")
 		return
+	}
+	if strings.EqualFold(filepath.Ext(full), ".svg") {
+		// SVG 是可执行文档格式；即使被直接打开也禁止脚本、导航和外部资源。
+		w.Header().Set("Content-Security-Policy", "sandbox; default-src 'none'; style-src 'unsafe-inline'; script-src 'none'")
 	}
 	http.ServeFile(w, r, full)
 }
@@ -260,7 +248,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/auth/status", s.handleAuthStatus)
 	mux.HandleFunc("POST /api/auth/login", s.handleAuthLogin)
 	mux.HandleFunc("/", s.handleStatic)
-	return logRequests(withCORS(s.blockIP(s.requireAuth(mux))))
+	return logRequests(withSecurityHeaders(withCORS(s.blockIP(s.requireAuth(mux)))))
 }
 
 // ---- 只读访问密码 ----
@@ -303,6 +291,14 @@ func (s *Server) issueToken() string {
 	return base64.RawURLEncoding.EncodeToString(payload) + "." + base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
 }
 
+// DesktopToken 为受信任的桌面壳签发令牌，避免将访问密码暴露给前端。
+func (s *Server) DesktopToken() string {
+	if s.password == "" || s.authSecret == nil {
+		return ""
+	}
+	return s.issueToken()
+}
+
 func (s *Server) handleAuthStatus(w http.ResponseWriter, r *http.Request) {
 	authed := false
 	if tok := r.Header.Get("Authorization"); tok != "" {
@@ -318,8 +314,7 @@ func (s *Server) handleAuthLogin(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Password string `json:"password"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeErr(w, http.StatusBadRequest, "请求体格式错误")
+	if !decodeJSON(w, r, &body) {
 		return
 	}
 	ip := clientIP(r)
@@ -343,14 +338,43 @@ func (s *Server) recordFail(ip string) {
 	}
 	s.lockMu.Lock()
 	defer s.lockMu.Unlock()
+	now := time.Now()
+	if len(s.lockFails) >= maxLoginLocks {
+		s.pruneLoginLocks(now)
+	}
 	l := s.lockFails[ip]
 	if l == nil {
+		if len(s.lockFails) >= maxLoginLocks {
+			s.evictOldestLoginLock()
+		}
 		l = &loginLock{}
 		s.lockFails[ip] = l
 	}
 	l.count++
+	l.last = now
 	if l.count >= loginMaxFails {
-		l.until = time.Now().Add(time.Duration(s.lockSec) * time.Second)
+		l.until = now.Add(time.Duration(s.lockSec) * time.Second)
+	}
+}
+
+func (s *Server) pruneLoginLocks(now time.Time) {
+	for ip, l := range s.lockFails {
+		if now.Sub(l.last) >= loginLockTTL && !l.until.After(now) {
+			delete(s.lockFails, ip)
+		}
+	}
+}
+
+func (s *Server) evictOldestLoginLock() {
+	var oldestIP string
+	var oldest time.Time
+	for ip, l := range s.lockFails {
+		if oldestIP == "" || l.last.Before(oldest) {
+			oldestIP, oldest = ip, l.last
+		}
+	}
+	if oldestIP != "" {
+		delete(s.lockFails, oldestIP)
 	}
 }
 
@@ -438,13 +462,40 @@ func (s *Server) blockIP(next http.Handler) http.Handler {
 // withCORS 允许跨源访问(桌面端壳页面直连本地 API)。
 func withCORS(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Access-Control-Allow-Origin", "*")
-		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+		origin := strings.TrimSpace(r.Header.Get("Origin"))
+		if origin != "" && !corsOriginAllowed(r, origin) {
+			writeErr(w, http.StatusForbidden, "不允许的跨域来源")
+			return
+		}
+		if origin != "" {
+			w.Header().Set("Access-Control-Allow-Origin", origin)
+			w.Header().Add("Vary", "Origin")
+			w.Header().Set("Access-Control-Allow-Methods", "GET, HEAD, POST, DELETE, OPTIONS")
+			w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+		}
 		if r.Method == http.MethodOptions {
 			w.WriteHeader(http.StatusNoContent)
 			return
 		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+func corsOriginAllowed(r *http.Request, origin string) bool {
+	if origin == "http://wails.localhost" || origin == "https://wails.localhost" || origin == "wails://wails.localhost" {
+		return true
+	}
+	u, err := url.Parse(origin)
+	return err == nil && (u.Scheme == "http" || u.Scheme == "https") && u.Host == r.Host
+}
+
+func withSecurityHeaders(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		w.Header().Set("X-Frame-Options", "DENY")
+		w.Header().Set("Referrer-Policy", "no-referrer")
+		w.Header().Set("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
+		w.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: http: https:; connect-src 'self' http://127.0.0.1:*; object-src 'none'; base-uri 'self'; frame-ancestors 'none'")
 		next.ServeHTTP(w, r)
 	})
 }
@@ -459,6 +510,27 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 
 func writeErr(w http.ResponseWriter, status int, msg string) {
 	writeJSON(w, status, map[string]string{"error": msg})
+}
+
+const maxJSONBody = 64 << 10
+
+func decodeJSON(w http.ResponseWriter, r *http.Request, dst any) bool {
+	r.Body = http.MaxBytesReader(w, r.Body, maxJSONBody)
+	dec := json.NewDecoder(r.Body)
+	if err := dec.Decode(dst); err != nil {
+		var tooLarge *http.MaxBytesError
+		if errors.As(err, &tooLarge) {
+			writeErr(w, http.StatusRequestEntityTooLarge, "请求体过大")
+		} else {
+			writeErr(w, http.StatusBadRequest, "请求体格式错误")
+		}
+		return false
+	}
+	if err := dec.Decode(&struct{}{}); err != io.EOF {
+		writeErr(w, http.StatusBadRequest, "请求体只能包含一个 JSON 值")
+		return false
+	}
+	return true
 }
 
 func logRequests(next http.Handler) http.Handler {
@@ -511,12 +583,12 @@ func (s *Server) handleTree(w http.ResponseWriter, r *http.Request) {
 		if st.Ready() {
 			ready = true
 		}
-		name := rootName(st)
+		name, id := rootName(st), s.rootID(st)
 		tree.Name = name
-		tree.Path = name
+		tree.Path = id
 		// 子节点路径补根名前缀, 保证 /api/doc 能正确路由到对应根
 		for _, c := range tree.Children {
-			prefixTreePath(c, name)
+			prefixTreePath(c, id)
 		}
 		root.Children = append(root.Children, tree)
 	}
@@ -560,8 +632,8 @@ func (s *Server) handleDoc(w http.ResponseWriter, r *http.Request) {
 		"modified": modified,
 		"size":     size,
 	})
-	// 记录访问(异步, 不影响响应)
-	go st.RecordAccess(s.rootPrefix(st, rel), clientIP(r), r.UserAgent())
+	// Store 使用内存缓存并串行原子落盘，不创建无界 goroutine。
+	st.RecordAccess(s.rootPrefix(st, rel), clientIP(r), r.UserAgent())
 }
 
 func clientIP(r *http.Request) string {
@@ -613,8 +685,6 @@ func (s *Server) handleStatic(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
-	// 禁止缓存: 确保网页端始终拿到最新前端
-	w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
 	upath := path.Clean("/" + r.URL.Path) // 统一为 / 开头的 URL 路径
 	if upath == "/" {
 		upath = "/index.html"
@@ -625,10 +695,12 @@ func (s *Server) handleStatic(w http.ResponseWriter, r *http.Request) {
 		full := filepath.Join(s.frontDir, filepath.FromSlash(rel))
 		if strings.HasPrefix(full, s.frontDir+string(os.PathSeparator)) {
 			if info, err := os.Stat(full); err == nil && !info.IsDir() {
+				setStaticCache(w, r, rel)
 				http.ServeFile(w, r, full)
 				return
 			}
 		}
+		setStaticCache(w, r, "index.html")
 		http.ServeFile(w, r, filepath.Join(s.frontDir, "index.html"))
 		return
 	}
@@ -638,8 +710,10 @@ func (s *Server) handleStatic(w http.ResponseWriter, r *http.Request) {
 // serveFS 从内嵌文件系统提供静态资源, 带 SPA 回退。
 func (s *Server) serveFS(w http.ResponseWriter, r *http.Request, rel string) {
 	f, err := s.webFS.Open(rel)
+	servedRel := rel
 	if err != nil {
 		f, err = s.webFS.Open("index.html") // SPA 回退
+		servedRel = "index.html"
 		if err != nil {
 			http.NotFound(w, r)
 			return
@@ -648,7 +722,9 @@ func (s *Server) serveFS(w http.ResponseWriter, r *http.Request, rel string) {
 	defer f.Close()
 	info, err := f.Stat()
 	if err != nil || info.IsDir() {
+		_ = f.Close()
 		f, err = s.webFS.Open("index.html")
+		servedRel = "index.html"
 		if err != nil {
 			http.NotFound(w, r)
 			return
@@ -664,7 +740,16 @@ func (s *Server) serveFS(w http.ResponseWriter, r *http.Request, rel string) {
 		http.Error(w, "unsupported file", http.StatusInternalServerError)
 		return
 	}
+	setStaticCache(w, r, servedRel)
 	http.ServeContent(w, r, info.Name(), info.ModTime(), seeker)
+}
+
+func setStaticCache(w http.ResponseWriter, r *http.Request, rel string) {
+	if rel != "index.html" && r.URL.Query().Get("v") != "" {
+		w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+		return
+	}
+	w.Header().Set("Cache-Control", "no-cache, must-revalidate")
 }
 
 // LanIPs 枚举本机非回环 IPv4 地址, 用于启动提示。

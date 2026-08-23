@@ -3,7 +3,6 @@
 package api
 
 import (
-	"encoding/json"
 	"errors"
 	"net/http"
 	"strings"
@@ -45,8 +44,7 @@ func (s *Server) handleAddAnnotation(w http.ResponseWriter, r *http.Request) {
 		Author  string `json:"author"`
 		Content string `json:"content"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeErr(w, http.StatusBadRequest, "请求体格式错误")
+	if !decodeJSON(w, r, &body) {
 		return
 	}
 	doc, ok := s.annoDoc(body.Doc)
@@ -75,8 +73,7 @@ func (s *Server) handleAddReply(w http.ResponseWriter, r *http.Request) {
 		Author  string `json:"author"`
 		Content string `json:"content"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeErr(w, http.StatusBadRequest, "请求体格式错误")
+	if !decodeJSON(w, r, &body) {
 		return
 	}
 	doc, ok := s.annoDoc(body.Doc)
@@ -107,8 +104,7 @@ func (s *Server) handleResolveAnnotation(w http.ResponseWriter, r *http.Request)
 		Doc      string `json:"doc"`
 		Resolved bool   `json:"resolved"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeErr(w, http.StatusBadRequest, "请求体格式错误")
+	if !decodeJSON(w, r, &body) {
 		return
 	}
 	doc, ok := s.annoDoc(body.Doc)

@@ -1,6 +1,7 @@
 package store
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -15,10 +16,10 @@ func newTestStore(t *testing.T) (*Store, string) {
 		t.Fatal(err)
 	}
 	files := map[string]string{
-		"README.md":         "# 项目说明\n\nDocShare 是一个局域网 Markdown 文档预览工具。\n支持全文搜索功能。",
-		"指南/使用说明.md":  "# 使用说明\n\n欢迎使用 DocShare 文档中心。本文介绍如何搜索文档。",
-		"指南/最佳实践.md":  "# 最佳实践\n\n文档目录建议按主题组织，文件名清晰简短。",
-		"other/notes.txt":   "这不是 Markdown 文件，不应该被索引。",
+		"README.md":       "# 项目说明\n\nDocShare 是一个局域网 Markdown 文档预览工具。\n支持全文搜索功能。",
+		"指南/使用说明.md":      "# 使用说明\n\n欢迎使用 DocShare 文档中心。本文介绍如何搜索文档。",
+		"指南/最佳实践.md":      "# 最佳实践\n\n文档目录建议按主题组织，文件名清晰简短。",
+		"other/notes.txt": "这不是 Markdown 文件，不应该被索引。",
 	}
 	for rel, content := range files {
 		p := filepath.Join(docs, filepath.FromSlash(rel))
@@ -160,5 +161,31 @@ func TestSearchEmpty(t *testing.T) {
 	}
 	if results != nil {
 		t.Fatalf("空查询应返回 nil")
+	}
+}
+
+func BenchmarkSearchWarmIndex(b *testing.B) {
+	root := b.TempDir()
+	dataDir := filepath.Join(b.TempDir(), "data")
+	for i := 0; i < 200; i++ {
+		name := filepath.Join(root, fmt.Sprintf("doc-%03d.md", i))
+		content := fmt.Sprintf("# Document %d\n\nalpha beta gamma 性能测试 文档搜索", i)
+		if err := os.WriteFile(name, []byte(content), 0o644); err != nil {
+			b.Fatal(err)
+		}
+	}
+	st, err := New(root, dataDir)
+	if err != nil {
+		b.Fatal(err)
+	}
+	b.Cleanup(st.Close)
+	if _, err := st.Search("alpha"); err != nil {
+		b.Fatal(err)
+	}
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if _, err := st.Search("alpha"); err != nil {
+			b.Fatal(err)
+		}
 	}
 }
