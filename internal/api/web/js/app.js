@@ -315,7 +315,7 @@ function loadMermaid() {
   if (!mermaidLoadPromise) {
     mermaidLoadPromise = new Promise((resolve, reject) => {
       const script = document.createElement('script');
-      script.src = 'vendor/mermaid.min.js?v=1.4.1';
+      script.src = 'vendor/mermaid.min.js?v=1.4.2';
       script.onload = () => window.mermaid
         ? resolve(window.mermaid)
         : reject(new Error('Mermaid 初始化失败'));
@@ -476,9 +476,21 @@ function canAnimateTheme(origin, previousTheme, nextTheme) {
     !window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 }
 
-// 设置主题；用户点击时，新配色从点击处向视口外扩散。
+// 将 Mermaid 重绘移出 View Transition 的快照更新阶段，避免阻塞动画启动。
+function refreshMermaidThemeWhenIdle() {
+  const refresh = () => rerenderMermaid().catch(() => { /* 保留现有图表 */ });
+  if (typeof window.requestIdleCallback === 'function') {
+    window.requestIdleCallback(refresh, { timeout: 500 });
+  } else {
+    window.setTimeout(refresh, 0);
+  }
+}
+
+// 设置主题；浅转深从交互点扩散，深转浅向交互点收拢。
 function setTheme(t, event, source) {
   if (!['dark', 'light', 'auto'].includes(t)) return;
+  const root = document.documentElement;
+  if (root.classList.contains('theme-transitioning')) return;
   const previousTheme = resolveTheme();
   const nextTheme = t === 'auto' ? (systemDark() ? 'dark' : 'light') : t;
   const origin = event ? themeOrigin(event, source) : null;
@@ -486,11 +498,11 @@ function setTheme(t, event, source) {
     state.theme = t;
     store.setItem('docshare-theme', t);
     applyTheme();
-    return rerenderMermaid().catch(() => { /* 配色切换不应被图表重渲染失败中断 */ });
   };
 
   if (!canAnimateTheme(origin, previousTheme, nextTheme)) {
     commit();
+    refreshMermaidThemeWhenIdle();
     return;
   }
 
@@ -500,32 +512,40 @@ function setTheme(t, event, source) {
     Math.max(x, window.innerWidth - x),
     Math.max(y, window.innerHeight - y),
   );
-  const root = document.documentElement;
+  const contracting = previousTheme === 'dark' && nextTheme === 'light';
+  root.dataset.themeTransition = contracting ? 'contract' : 'expand';
   root.classList.add('theme-transitioning');
   let transition;
   try {
     transition = document.startViewTransition(commit);
   } catch {
     root.classList.remove('theme-transitioning');
+    delete root.dataset.themeTransition;
     commit();
+    refreshMermaidThemeWhenIdle();
     return;
   }
   transition.ready.then(() => {
+    const outerClip = `circle(${radius}px at ${x}px ${y}px)`;
+    const innerClip = `circle(0px at ${x}px ${y}px)`;
     root.animate(
       {
-        clipPath: [
-          `circle(0px at ${x}px ${y}px)`,
-          `circle(${radius}px at ${x}px ${y}px)`,
-        ],
+        clipPath: contracting ? [outerClip, innerClip] : [innerClip, outerClip],
       },
       {
-        duration: 520,
-        easing: 'cubic-bezier(0.22, 1, 0.36, 1)',
-        pseudoElement: '::view-transition-new(root)',
+        duration: 650,
+        easing: 'cubic-bezier(0.4, 0, 0.2, 1)',
+        pseudoElement: contracting
+          ? '::view-transition-old(root)'
+          : '::view-transition-new(root)',
       },
     );
   }).catch(() => { /* 主题已切换，仅跳过动画 */ });
-  const finish = () => root.classList.remove('theme-transitioning');
+  const finish = () => {
+    root.classList.remove('theme-transitioning');
+    delete root.dataset.themeTransition;
+    refreshMermaidThemeWhenIdle();
+  };
   transition.finished.then(finish, finish);
 }
 

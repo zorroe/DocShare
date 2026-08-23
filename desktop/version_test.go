@@ -109,7 +109,7 @@ func TestParseChecksum(t *testing.T) {
 }
 
 func TestValidateInstallerPath(t *testing.T) {
-	valid := filepath.Join(os.TempDir(), "DocShare-Setup-1.4.1.exe")
+	valid := filepath.Join(os.TempDir(), "DocShare-Setup-1.4.2.exe")
 	if got, err := validateInstallerPath(valid); err != nil || got == "" {
 		t.Fatalf("合法安装包路径被拒绝: %q, %v", got, err)
 	}

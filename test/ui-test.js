@@ -421,16 +421,24 @@ const EDGE = 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe'
   const themeDark = await page.evaluate(() => document.documentElement.dataset.theme);
   check('深色主题切换', themeDark === 'dark', `theme=${themeDark}`);
 
-  // 主题扩散动画: 新主题应从点击处的圆形向外揭示
+  // 主题双向动画: 浅转深向外扩散，深转浅向按钮收拢
   await page.waitForFunction(() => !document.documentElement.classList.contains('theme-transitioning'));
-  await page.emulateMediaFeatures([{ name: 'prefers-reduced-motion', value: 'no-preference' }]);
+  await page.emulateMediaFeatures([
+    { name: 'prefers-reduced-motion', value: 'no-preference' },
+    { name: 'prefers-color-scheme', value: 'dark' },
+  ]);
   const themeBox = await (await page.$('#themeBtn')).boundingBox();
   await page.evaluate(() => {
     window.__dsThemeTransitionCalls = 0;
     window.__dsThemeAnimation = null;
+    window.__dsThemeUpdateReturnedPromise = null;
     document.startViewTransition = (update) => {
       window.__dsThemeTransitionCalls++;
-      const updated = Promise.resolve().then(update);
+      const updated = Promise.resolve().then(() => {
+        const updateResult = update();
+        window.__dsThemeUpdateReturnedPromise = !!updateResult && typeof updateResult.then === 'function';
+        return updateResult;
+      });
       return { ready: updated, finished: updated };
     };
     document.documentElement.animate = (frames, options) => {
@@ -440,32 +448,59 @@ const EDGE = 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe'
   });
   await page.click('#themeBtn');
   await page.waitForFunction(() => !!window.__dsThemeAnimation, { timeout: 3000 });
+  const contract = await page.evaluate(() => ({
+    calls: window.__dsThemeTransitionCalls,
+    updateReturnedPromise: window.__dsThemeUpdateReturnedPromise,
+    animation: window.__dsThemeAnimation,
+    theme: document.documentElement.dataset.theme,
+  }));
+  const contractFrames = Array.isArray(contract.animation.frames)
+    ? contract.animation.frames.map((frame) => frame.clipPath)
+    : contract.animation.frames.clipPath;
+  const contractStart = contractFrames[0];
+  const contractEnd = contractFrames[contractFrames.length - 1];
+  const originMatch = contractEnd.match(/at ([\d.]+)px ([\d.]+)px/);
+  const originOK = originMatch &&
+    Math.abs(Number(originMatch[1]) - (themeBox.x + themeBox.width / 2)) < 2 &&
+    Math.abs(Number(originMatch[2]) - (themeBox.y + themeBox.height / 2)) < 2;
+  check('深色向按钮收拢', contract.calls === 1 && contract.theme === 'light' && originOK &&
+    contract.updateReturnedPromise === false &&
+    contract.animation.options.pseudoElement === '::view-transition-old(root)' &&
+    contract.animation.options.duration === 650 && !contractStart.startsWith('circle(0px') &&
+    contractEnd.startsWith('circle(0px'), JSON.stringify(contract.animation));
+
+  await page.evaluate(() => { window.__dsThemeAnimation = null; });
+  await page.click('#themeBtn');
+  await page.waitForFunction(() => !!window.__dsThemeAnimation, { timeout: 3000 });
   const spread = await page.evaluate(() => ({
     calls: window.__dsThemeTransitionCalls,
     animation: window.__dsThemeAnimation,
     theme: document.documentElement.dataset.theme,
   }));
-  const clipFrames = Array.isArray(spread.animation.frames)
+  const spreadFrames = Array.isArray(spread.animation.frames)
     ? spread.animation.frames.map((frame) => frame.clipPath)
     : spread.animation.frames.clipPath;
-  const startClip = clipFrames[0];
-  const originMatch = startClip.match(/at ([\d.]+)px ([\d.]+)px/);
-  const originOK = originMatch &&
-    Math.abs(Number(originMatch[1]) - (themeBox.x + themeBox.width / 2)) < 2 &&
-    Math.abs(Number(originMatch[2]) - (themeBox.y + themeBox.height / 2)) < 2;
-  check('主题从点击处向外扩散', spread.calls === 1 && spread.theme === 'light' && originOK &&
-    spread.animation.options.pseudoElement === '::view-transition-new(root)', startClip);
+  check('浅色从按钮向外扩散', spread.calls === 2 && spread.theme === 'dark' &&
+    spread.animation.options.pseudoElement === '::view-transition-new(root)' &&
+    spread.animation.options.duration === 650 && spreadFrames[0].startsWith('circle(0px') &&
+    !spreadFrames[spreadFrames.length - 1].startsWith('circle(0px'), JSON.stringify(spread.animation));
 
   // 系统要求减少动画时直接切换，不启动 View Transition
-  await page.emulateMediaFeatures([{ name: 'prefers-reduced-motion', value: 'reduce' }]);
+  await page.emulateMediaFeatures([
+    { name: 'prefers-reduced-motion', value: 'reduce' },
+    { name: 'prefers-color-scheme', value: 'dark' },
+  ]);
   await reopenThemeMenu();
-  await page.click('#menuPop [data-act="theme-dark"]');
+  await page.click('#menuPop [data-act="theme-light"]');
   const reduced = await page.evaluate(() => ({
     calls: window.__dsThemeTransitionCalls,
     theme: document.documentElement.dataset.theme,
   }));
-  check('减少动画偏好降级', reduced.calls === 1 && reduced.theme === 'dark', JSON.stringify(reduced));
-  await page.emulateMediaFeatures([{ name: 'prefers-reduced-motion', value: 'no-preference' }]);
+  check('减少动画偏好降级', reduced.calls === 2 && reduced.theme === 'light', JSON.stringify(reduced));
+  await page.emulateMediaFeatures([
+    { name: 'prefers-reduced-motion', value: 'no-preference' },
+    { name: 'prefers-color-scheme', value: 'dark' },
+  ]);
 
   // 键盘触发没有指针坐标，以按钮中心作为扩散原点
   await page.evaluate(() => { window.__dsThemeAnimation = null; });
@@ -480,7 +515,8 @@ const EDGE = 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe'
   const keyboardOriginOK = keyboardOrigin &&
     Math.abs(Number(keyboardOrigin[1]) - (themeBox.x + themeBox.width / 2)) < 2 &&
     Math.abs(Number(keyboardOrigin[2]) - (themeBox.y + themeBox.height / 2)) < 2;
-  check('键盘切换使用按钮中心', keyboardOriginOK, keyboardClip);
+  const keyboardPseudo = await page.evaluate(() => window.__dsThemeAnimation.options.pseudoElement);
+  check('键盘切换使用按钮中心', keyboardOriginOK && keyboardPseudo === '::view-transition-new(root)', keyboardClip);
 
   await reopenThemeMenu();
   await page.click('#menuPop [data-act="settings"]');

@@ -104,7 +104,7 @@ body {
   transition: background var(--transition), color var(--transition);
 }
 
-/* 主题切换: 新配色从交互点向外扩散，旧配色留在底层。 */
+/* 主题切换: 浅转深向外扩散，深转浅让旧配色向交互点收拢。 */
 html.theme-transitioning::view-transition { pointer-events: none; }
 
 html.theme-transitioning::view-transition-old(root),
@@ -114,8 +114,11 @@ html.theme-transitioning::view-transition-new(root) {
   pointer-events: none;
 }
 
-html.theme-transitioning::view-transition-old(root) { z-index: 1; }
-html.theme-transitioning::view-transition-new(root) { z-index: 2; }
+html[data-theme-transition="expand"]::view-transition-old(root),
+html[data-theme-transition="contract"]::view-transition-new(root) { z-index: 1; }
+
+html[data-theme-transition="expand"]::view-transition-new(root),
+html[data-theme-transition="contract"]::view-transition-old(root) { z-index: 2; }
 
 /* 快照内禁止普通颜色过渡，避免圆形边界出现渐变重影。 */
 html.theme-transitioning *,
