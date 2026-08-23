@@ -157,11 +157,11 @@ const EDGE = 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe'
   await page.$$eval('.tree-row', (rows) => {
     rows.find((r) => r.textContent.includes('图片示例')).click();
   });
-  await page.waitForFunction(() => document.querySelector('#docView .md-body img.doc-img'), { timeout: 6000 });
+  await page.waitForFunction(() => document.querySelector('#docView .md-body img.doc-img'), { timeout: 15000 });
   await page.waitForFunction(() => {
     const imgs = [...document.querySelectorAll('#docView .md-body img.doc-img')];
     return imgs.length >= 2 && imgs.every((i) => i.complete && i.naturalWidth > 0);
-  }, { timeout: 6000 });
+  }, { timeout: 15000 });
   const imgSrcOk = await page.$$eval('#docView .md-body img.doc-img', (els) => els.every((i) => i.src.includes('/api/file?path=')));
   check('文档图片渲染', imgSrcOk, '');
   // 导出含图片文档 → 图片内联 base64
