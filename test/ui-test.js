@@ -402,18 +402,86 @@ const EDGE = 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe'
   // 主题菜单: 三项 + 跟随系统生效
   const themeItems = await page.$$eval('#menuPop .theme-item', (els) => els.length);
   check('主题菜单三项', themeItems === 3, `count=${themeItems}`);
+  const reopenThemeMenu = async () => {
+    await page.waitForFunction(() => !document.documentElement.classList.contains('theme-transitioning'));
+    await page.click('#menuBtn');
+    await page.waitForSelector('#menuPop:not([hidden])');
+  };
   await page.click('#menuPop [data-act="theme-auto"]');
   const themeAuto = await page.evaluate(() => document.documentElement.dataset.theme);
   check('跟随系统主题生效', themeAuto === 'light' || themeAuto === 'dark', `theme=${themeAuto}`);
-  await page.click('#menuBtn');
+  await reopenThemeMenu();
   await page.click('#menuPop [data-act="theme-light"]');
+  await page.waitForFunction(() => document.documentElement.dataset.theme === 'light');
   const themeLight = await page.evaluate(() => document.documentElement.dataset.theme);
   check('浅色主题切换', themeLight === 'light', `theme=${themeLight}`);
-  await page.click('#menuBtn');
+  await reopenThemeMenu();
   await page.click('#menuPop [data-act="theme-dark"]');
+  await page.waitForFunction(() => document.documentElement.dataset.theme === 'dark');
   const themeDark = await page.evaluate(() => document.documentElement.dataset.theme);
   check('深色主题切换', themeDark === 'dark', `theme=${themeDark}`);
-  await page.click('#menuBtn');
+
+  // 主题扩散动画: 新主题应从点击处的圆形向外揭示
+  await page.waitForFunction(() => !document.documentElement.classList.contains('theme-transitioning'));
+  const themeBox = await (await page.$('#themeBtn')).boundingBox();
+  await page.evaluate(() => {
+    window.__dsThemeTransitionCalls = 0;
+    window.__dsThemeAnimation = null;
+    document.startViewTransition = (update) => {
+      window.__dsThemeTransitionCalls++;
+      const updated = Promise.resolve().then(update);
+      return { ready: updated, finished: updated };
+    };
+    document.documentElement.animate = (frames, options) => {
+      window.__dsThemeAnimation = { frames, options };
+      return { finished: Promise.resolve(), cancel() {} };
+    };
+  });
+  await page.click('#themeBtn');
+  await page.waitForFunction(() => !!window.__dsThemeAnimation, { timeout: 3000 });
+  const spread = await page.evaluate(() => ({
+    calls: window.__dsThemeTransitionCalls,
+    animation: window.__dsThemeAnimation,
+    theme: document.documentElement.dataset.theme,
+  }));
+  const clipFrames = Array.isArray(spread.animation.frames)
+    ? spread.animation.frames.map((frame) => frame.clipPath)
+    : spread.animation.frames.clipPath;
+  const startClip = clipFrames[0];
+  const originMatch = startClip.match(/at ([\d.]+)px ([\d.]+)px/);
+  const originOK = originMatch &&
+    Math.abs(Number(originMatch[1]) - (themeBox.x + themeBox.width / 2)) < 2 &&
+    Math.abs(Number(originMatch[2]) - (themeBox.y + themeBox.height / 2)) < 2;
+  check('主题从点击处向外扩散', spread.calls === 1 && spread.theme === 'light' && originOK &&
+    spread.animation.options.pseudoElement === '::view-transition-new(root)', startClip);
+
+  // 系统要求减少动画时直接切换，不启动 View Transition
+  await page.emulateMediaFeatures([{ name: 'prefers-reduced-motion', value: 'reduce' }]);
+  await reopenThemeMenu();
+  await page.click('#menuPop [data-act="theme-dark"]');
+  const reduced = await page.evaluate(() => ({
+    calls: window.__dsThemeTransitionCalls,
+    theme: document.documentElement.dataset.theme,
+  }));
+  check('减少动画偏好降级', reduced.calls === 1 && reduced.theme === 'dark', JSON.stringify(reduced));
+  await page.emulateMediaFeatures([{ name: 'prefers-reduced-motion', value: 'no-preference' }]);
+
+  // 键盘触发没有指针坐标，以按钮中心作为扩散原点
+  await page.evaluate(() => { window.__dsThemeAnimation = null; });
+  await page.focus('#themeBtn');
+  await page.keyboard.press('Enter');
+  await page.waitForFunction(() => !!window.__dsThemeAnimation, { timeout: 3000 });
+  const keyboardClip = await page.evaluate(() => {
+    const frames = window.__dsThemeAnimation.frames;
+    return Array.isArray(frames) ? frames[0].clipPath : frames.clipPath[0];
+  });
+  const keyboardOrigin = keyboardClip.match(/at ([\d.]+)px ([\d.]+)px/);
+  const keyboardOriginOK = keyboardOrigin &&
+    Math.abs(Number(keyboardOrigin[1]) - (themeBox.x + themeBox.width / 2)) < 2 &&
+    Math.abs(Number(keyboardOrigin[2]) - (themeBox.y + themeBox.height / 2)) < 2;
+  check('键盘切换使用按钮中心', keyboardOriginOK, keyboardClip);
+
+  await reopenThemeMenu();
   await page.click('#menuPop [data-act="settings"]');
   await page.waitForSelector('#settingsMask:not([hidden])');
   const docsDirVal = await page.$eval('#multiDirs', (el) => el.textContent);

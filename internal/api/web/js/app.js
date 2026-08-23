@@ -315,7 +315,7 @@ function loadMermaid() {
   if (!mermaidLoadPromise) {
     mermaidLoadPromise = new Promise((resolve, reject) => {
       const script = document.createElement('script');
-      script.src = 'vendor/mermaid.min.js?v=1.4.0';
+      script.src = 'vendor/mermaid.min.js?v=1.4.1';
       script.onload = () => window.mermaid
         ? resolve(window.mermaid)
         : reject(new Error('Mermaid 初始化失败'));
@@ -452,6 +452,7 @@ function applyTheme() {
   els.themeBtn.title = state.theme === 'auto'
     ? '当前跟随系统（点击切换）'
     : (isDark ? '切换到浅色' : '切换到深色');
+  els.themeBtn.setAttribute('aria-label', els.themeBtn.title);
   // 菜单勾选当前主题项
   document.querySelectorAll('.theme-item').forEach((item) => {
     const on = item.dataset.act === 'theme-' + state.theme;
@@ -459,13 +460,73 @@ function applyTheme() {
   });
 }
 
-// 设置主题并联动 Mermaid 重渲染
-function setTheme(t) {
+function themeOrigin(event, fallback) {
+  if (event && event.detail !== 0 && Number.isFinite(event.clientX) && Number.isFinite(event.clientY)) {
+    return { x: event.clientX, y: event.clientY };
+  }
+  const rect = fallback && fallback.getBoundingClientRect();
+  return rect
+    ? { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 }
+    : { x: window.innerWidth / 2, y: window.innerHeight / 2 };
+}
+
+function canAnimateTheme(origin, previousTheme, nextTheme) {
+  return origin && previousTheme !== nextTheme &&
+    typeof document.startViewTransition === 'function' &&
+    !window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+}
+
+// 设置主题；用户点击时，新配色从点击处向视口外扩散。
+function setTheme(t, event, source) {
   if (!['dark', 'light', 'auto'].includes(t)) return;
-  state.theme = t;
-  store.setItem('docshare-theme', t);
-  applyTheme();
-  rerenderMermaid();
+  const previousTheme = resolveTheme();
+  const nextTheme = t === 'auto' ? (systemDark() ? 'dark' : 'light') : t;
+  const origin = event ? themeOrigin(event, source) : null;
+  const commit = () => {
+    state.theme = t;
+    store.setItem('docshare-theme', t);
+    applyTheme();
+    return rerenderMermaid().catch(() => { /* 配色切换不应被图表重渲染失败中断 */ });
+  };
+
+  if (!canAnimateTheme(origin, previousTheme, nextTheme)) {
+    commit();
+    return;
+  }
+
+  const x = Math.max(0, Math.min(window.innerWidth, origin.x));
+  const y = Math.max(0, Math.min(window.innerHeight, origin.y));
+  const radius = Math.hypot(
+    Math.max(x, window.innerWidth - x),
+    Math.max(y, window.innerHeight - y),
+  );
+  const root = document.documentElement;
+  root.classList.add('theme-transitioning');
+  let transition;
+  try {
+    transition = document.startViewTransition(commit);
+  } catch {
+    root.classList.remove('theme-transitioning');
+    commit();
+    return;
+  }
+  transition.ready.then(() => {
+    root.animate(
+      {
+        clipPath: [
+          `circle(0px at ${x}px ${y}px)`,
+          `circle(${radius}px at ${x}px ${y}px)`,
+        ],
+      },
+      {
+        duration: 520,
+        easing: 'cubic-bezier(0.22, 1, 0.36, 1)',
+        pseudoElement: '::view-transition-new(root)',
+      },
+    );
+  }).catch(() => { /* 主题已切换，仅跳过动画 */ });
+  const finish = () => root.classList.remove('theme-transitioning');
+  transition.finished.then(finish, finish);
 }
 
 /* ============================================================
@@ -489,13 +550,13 @@ function bindMenu() {
     toggleMenu();
   });
   els.menuPop.querySelectorAll('.menu-item').forEach((item) => {
-    item.addEventListener('click', () => {
+    item.addEventListener('click', (event) => {
       const act = item.dataset.act;
       if (act === 'settings') openSettings();
       else if (act === 'access') openAccess();
-      else if (act === 'theme-dark') setTheme('dark');
-      else if (act === 'theme-light') setTheme('light');
-      else if (act === 'theme-auto') setTheme('auto');
+      else if (act === 'theme-dark') setTheme('dark', event, item);
+      else if (act === 'theme-light') setTheme('light', event, item);
+      else if (act === 'theme-auto') setTheme('auto', event, item);
       closeMenu();
     });
   });
@@ -1955,10 +2016,10 @@ async function init() {
     if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) submitAnno();
   });
 
-  els.themeBtn.addEventListener('click', () => {
+  els.themeBtn.addEventListener('click', (event) => {
     // 循环: 深色 → 浅色 → 跟随系统 → 深色
     const next = state.theme === 'dark' ? 'light' : state.theme === 'light' ? 'auto' : 'dark';
-    setTheme(next);
+    setTheme(next, event, els.themeBtn);
   });
 
   // 跟随系统: 系统主题切换时自动联动

@@ -104,6 +104,33 @@ body {
   transition: background var(--transition), color var(--transition);
 }
 
+/* 主题切换: 新配色从交互点向外扩散，旧配色留在底层。 */
+html.theme-transitioning::view-transition { pointer-events: none; }
+
+html.theme-transitioning::view-transition-old(root),
+html.theme-transitioning::view-transition-new(root) {
+  animation: none;
+  mix-blend-mode: normal;
+  pointer-events: none;
+}
+
+html.theme-transitioning::view-transition-old(root) { z-index: 1; }
+html.theme-transitioning::view-transition-new(root) { z-index: 2; }
+
+/* 快照内禁止普通颜色过渡，避免圆形边界出现渐变重影。 */
+html.theme-transitioning *,
+html.theme-transitioning *::before,
+html.theme-transitioning *::after {
+  transition-duration: 0s !important;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html.theme-transitioning::view-transition-old(root),
+  html.theme-transitioning::view-transition-new(root) {
+    animation: none !important;
+  }
+}
+
 button { font-family: inherit; cursor: pointer; }
 input, textarea { font-family: inherit; }
 ::selection { background: var(--accent-soft); }

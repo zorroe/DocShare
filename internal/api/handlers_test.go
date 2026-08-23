@@ -321,7 +321,7 @@ func TestVersionedStaticAssetsAreCacheable(t *testing.T) {
 	ts := httptest.NewServer(srv.Handler())
 	defer ts.Close()
 
-	asset, err := http.Get(ts.URL + "/vendor/mermaid.min.js?v=1.4.0")
+	asset, err := http.Get(ts.URL + "/vendor/mermaid.min.js?v=1.4.1")
 	if err != nil {
 		t.Fatal(err)
 	}
