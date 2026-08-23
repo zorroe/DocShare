@@ -428,6 +428,11 @@ const EDGE = 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe'
     { name: 'prefers-color-scheme', value: 'dark' },
   ]);
   const themeBox = await (await page.$('#themeBtn')).boundingBox();
+  const themeViewport = await page.evaluate(() => ({ width: innerWidth, height: innerHeight }));
+  const requiredThemeRadius = Math.hypot(
+    Math.max(themeBox.x + themeBox.width / 2, themeViewport.width - themeBox.x - themeBox.width / 2),
+    Math.max(themeBox.y + themeBox.height / 2, themeViewport.height - themeBox.y - themeBox.height / 2),
+  );
   await page.evaluate(() => {
     window.__dsThemeTransitionCalls = 0;
     window.__dsThemeAnimation = null;
@@ -459,6 +464,7 @@ const EDGE = 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe'
     : contract.animation.frames.clipPath;
   const contractStart = contractFrames[0];
   const contractEnd = contractFrames[contractFrames.length - 1];
+  const contractRadius = Number((contractStart.match(/^circle\(([\d.]+)px/) || [])[1]);
   const originMatch = contractEnd.match(/at ([\d.]+)px ([\d.]+)px/);
   const originOK = originMatch &&
     Math.abs(Number(originMatch[1]) - (themeBox.x + themeBox.width / 2)) < 2 &&
@@ -466,7 +472,8 @@ const EDGE = 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe'
   check('深色向按钮收拢', contract.calls === 1 && contract.theme === 'light' && originOK &&
     contract.updateReturnedPromise === false &&
     contract.animation.options.pseudoElement === '::view-transition-old(root)' &&
-    contract.animation.options.duration === 650 && !contractStart.startsWith('circle(0px') &&
+    contract.animation.options.duration === 650 && contract.animation.options.fill === 'forwards' &&
+    contractRadius > requiredThemeRadius &&
     contractEnd.startsWith('circle(0px'), JSON.stringify(contract.animation));
 
   await page.evaluate(() => { window.__dsThemeAnimation = null; });
@@ -480,10 +487,12 @@ const EDGE = 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe'
   const spreadFrames = Array.isArray(spread.animation.frames)
     ? spread.animation.frames.map((frame) => frame.clipPath)
     : spread.animation.frames.clipPath;
+  const spreadRadius = Number((spreadFrames[spreadFrames.length - 1].match(/^circle\(([\d.]+)px/) || [])[1]);
   check('浅色从按钮向外扩散', spread.calls === 2 && spread.theme === 'dark' &&
     spread.animation.options.pseudoElement === '::view-transition-new(root)' &&
-    spread.animation.options.duration === 650 && spreadFrames[0].startsWith('circle(0px') &&
-    !spreadFrames[spreadFrames.length - 1].startsWith('circle(0px'), JSON.stringify(spread.animation));
+    spread.animation.options.duration === 650 && spread.animation.options.fill === 'forwards' &&
+    spreadFrames[0].startsWith('circle(0px') && spreadRadius > requiredThemeRadius,
+    JSON.stringify(spread.animation));
 
   // 系统要求减少动画时直接切换，不启动 View Transition
   await page.emulateMediaFeatures([

@@ -315,7 +315,7 @@ function loadMermaid() {
   if (!mermaidLoadPromise) {
     mermaidLoadPromise = new Promise((resolve, reject) => {
       const script = document.createElement('script');
-      script.src = 'vendor/mermaid.min.js?v=1.4.2';
+      script.src = 'vendor/mermaid.min.js?v=1.4.3';
       script.onload = () => window.mermaid
         ? resolve(window.mermaid)
         : reject(new Error('Mermaid 初始化失败'));
@@ -508,10 +508,11 @@ function setTheme(t, event, source) {
 
   const x = Math.max(0, Math.min(window.innerWidth, origin.x));
   const y = Math.max(0, Math.min(window.innerHeight, origin.y));
-  const radius = Math.hypot(
+  // 覆盖最远角点并留出抗锯齿余量，避免宽屏边缘在收尾时突然补色。
+  const radius = Math.ceil(Math.hypot(
     Math.max(x, window.innerWidth - x),
     Math.max(y, window.innerHeight - y),
-  );
+  )) + 2;
   const contracting = previousTheme === 'dark' && nextTheme === 'light';
   root.dataset.themeTransition = contracting ? 'contract' : 'expand';
   root.classList.add('theme-transitioning');
@@ -535,6 +536,8 @@ function setTheme(t, event, source) {
       {
         duration: 650,
         easing: 'cubic-bezier(0.4, 0, 0.2, 1)',
+        // 保持裁剪末帧，防止 View Transition 清理前闪回整张快照。
+        fill: 'forwards',
         pseudoElement: contracting
           ? '::view-transition-old(root)'
           : '::view-transition-new(root)',
