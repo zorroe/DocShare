@@ -423,6 +423,7 @@ const EDGE = 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe'
 
   // 主题扩散动画: 新主题应从点击处的圆形向外揭示
   await page.waitForFunction(() => !document.documentElement.classList.contains('theme-transitioning'));
+  await page.emulateMediaFeatures([{ name: 'prefers-reduced-motion', value: 'no-preference' }]);
   const themeBox = await (await page.$('#themeBtn')).boundingBox();
   await page.evaluate(() => {
     window.__dsThemeTransitionCalls = 0;
