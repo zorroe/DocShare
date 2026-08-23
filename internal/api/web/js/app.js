@@ -315,7 +315,7 @@ function loadMermaid() {
   if (!mermaidLoadPromise) {
     mermaidLoadPromise = new Promise((resolve, reject) => {
       const script = document.createElement('script');
-      script.src = 'vendor/mermaid.min.js?v=1.4.3';
+      script.src = 'vendor/mermaid.min.js?v=1.4.4';
       script.onload = () => window.mermaid
         ? resolve(window.mermaid)
         : reject(new Error('Mermaid 初始化失败'));
@@ -460,96 +460,13 @@ function applyTheme() {
   });
 }
 
-function themeOrigin(event, fallback) {
-  if (event && event.detail !== 0 && Number.isFinite(event.clientX) && Number.isFinite(event.clientY)) {
-    return { x: event.clientX, y: event.clientY };
-  }
-  const rect = fallback && fallback.getBoundingClientRect();
-  return rect
-    ? { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 }
-    : { x: window.innerWidth / 2, y: window.innerHeight / 2 };
-}
-
-function canAnimateTheme(origin, previousTheme, nextTheme) {
-  return origin && previousTheme !== nextTheme &&
-    typeof document.startViewTransition === 'function' &&
-    !window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-}
-
-// 将 Mermaid 重绘移出 View Transition 的快照更新阶段，避免阻塞动画启动。
-function refreshMermaidThemeWhenIdle() {
-  const refresh = () => rerenderMermaid().catch(() => { /* 保留现有图表 */ });
-  if (typeof window.requestIdleCallback === 'function') {
-    window.requestIdleCallback(refresh, { timeout: 500 });
-  } else {
-    window.setTimeout(refresh, 0);
-  }
-}
-
-// 设置主题；浅转深从交互点扩散，深转浅向交互点收拢。
-function setTheme(t, event, source) {
+// 设置主题；页面组件通过 CSS 变量统一渐变到新配色。
+function setTheme(t) {
   if (!['dark', 'light', 'auto'].includes(t)) return;
-  const root = document.documentElement;
-  if (root.classList.contains('theme-transitioning')) return;
-  const previousTheme = resolveTheme();
-  const nextTheme = t === 'auto' ? (systemDark() ? 'dark' : 'light') : t;
-  const origin = event ? themeOrigin(event, source) : null;
-  const commit = () => {
-    state.theme = t;
-    store.setItem('docshare-theme', t);
-    applyTheme();
-  };
-
-  if (!canAnimateTheme(origin, previousTheme, nextTheme)) {
-    commit();
-    refreshMermaidThemeWhenIdle();
-    return;
-  }
-
-  const x = Math.max(0, Math.min(window.innerWidth, origin.x));
-  const y = Math.max(0, Math.min(window.innerHeight, origin.y));
-  // 覆盖最远角点并留出抗锯齿余量，避免宽屏边缘在收尾时突然补色。
-  const radius = Math.ceil(Math.hypot(
-    Math.max(x, window.innerWidth - x),
-    Math.max(y, window.innerHeight - y),
-  )) + 2;
-  const contracting = previousTheme === 'dark' && nextTheme === 'light';
-  root.dataset.themeTransition = contracting ? 'contract' : 'expand';
-  root.classList.add('theme-transitioning');
-  let transition;
-  try {
-    transition = document.startViewTransition(commit);
-  } catch {
-    root.classList.remove('theme-transitioning');
-    delete root.dataset.themeTransition;
-    commit();
-    refreshMermaidThemeWhenIdle();
-    return;
-  }
-  transition.ready.then(() => {
-    const outerClip = `circle(${radius}px at ${x}px ${y}px)`;
-    const innerClip = `circle(0px at ${x}px ${y}px)`;
-    root.animate(
-      {
-        clipPath: contracting ? [outerClip, innerClip] : [innerClip, outerClip],
-      },
-      {
-        duration: 650,
-        easing: 'cubic-bezier(0.4, 0, 0.2, 1)',
-        // 保持裁剪末帧，防止 View Transition 清理前闪回整张快照。
-        fill: 'forwards',
-        pseudoElement: contracting
-          ? '::view-transition-old(root)'
-          : '::view-transition-new(root)',
-      },
-    );
-  }).catch(() => { /* 主题已切换，仅跳过动画 */ });
-  const finish = () => {
-    root.classList.remove('theme-transitioning');
-    delete root.dataset.themeTransition;
-    refreshMermaidThemeWhenIdle();
-  };
-  transition.finished.then(finish, finish);
+  state.theme = t;
+  store.setItem('docshare-theme', t);
+  applyTheme();
+  rerenderMermaid().catch(() => { /* 保留现有图表 */ });
 }
 
 /* ============================================================
@@ -573,13 +490,13 @@ function bindMenu() {
     toggleMenu();
   });
   els.menuPop.querySelectorAll('.menu-item').forEach((item) => {
-    item.addEventListener('click', (event) => {
+    item.addEventListener('click', () => {
       const act = item.dataset.act;
       if (act === 'settings') openSettings();
       else if (act === 'access') openAccess();
-      else if (act === 'theme-dark') setTheme('dark', event, item);
-      else if (act === 'theme-light') setTheme('light', event, item);
-      else if (act === 'theme-auto') setTheme('auto', event, item);
+      else if (act === 'theme-dark') setTheme('dark');
+      else if (act === 'theme-light') setTheme('light');
+      else if (act === 'theme-auto') setTheme('auto');
       closeMenu();
     });
   });
@@ -2039,10 +1956,10 @@ async function init() {
     if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) submitAnno();
   });
 
-  els.themeBtn.addEventListener('click', (event) => {
+  els.themeBtn.addEventListener('click', () => {
     // 循环: 深色 → 浅色 → 跟随系统 → 深色
     const next = state.theme === 'dark' ? 'light' : state.theme === 'light' ? 'auto' : 'dark';
-    setTheme(next, event, els.themeBtn);
+    setTheme(next);
   });
 
   // 跟随系统: 系统主题切换时自动联动

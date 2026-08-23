@@ -403,7 +403,6 @@ const EDGE = 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe'
   const themeItems = await page.$$eval('#menuPop .theme-item', (els) => els.length);
   check('主题菜单三项', themeItems === 3, `count=${themeItems}`);
   const reopenThemeMenu = async () => {
-    await page.waitForFunction(() => !document.documentElement.classList.contains('theme-transitioning'));
     await page.click('#menuBtn');
     await page.waitForSelector('#menuPop:not([hidden])');
   };
@@ -421,80 +420,40 @@ const EDGE = 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe'
   const themeDark = await page.evaluate(() => document.documentElement.dataset.theme);
   check('深色主题切换', themeDark === 'dark', `theme=${themeDark}`);
 
-  // 主题双向动画: 浅转深向外扩散，深转浅向按钮收拢
-  await page.waitForFunction(() => !document.documentElement.classList.contains('theme-transitioning'));
+  // 主题切换恢复为全局渐变，不应再启动圆形 View Transition
   await page.emulateMediaFeatures([
     { name: 'prefers-reduced-motion', value: 'no-preference' },
     { name: 'prefers-color-scheme', value: 'dark' },
   ]);
-  const themeBox = await (await page.$('#themeBtn')).boundingBox();
-  const themeViewport = await page.evaluate(() => ({ width: innerWidth, height: innerHeight }));
-  const requiredThemeRadius = Math.hypot(
-    Math.max(themeBox.x + themeBox.width / 2, themeViewport.width - themeBox.x - themeBox.width / 2),
-    Math.max(themeBox.y + themeBox.height / 2, themeViewport.height - themeBox.y - themeBox.height / 2),
-  );
   await page.evaluate(() => {
     window.__dsThemeTransitionCalls = 0;
-    window.__dsThemeAnimation = null;
-    window.__dsThemeUpdateReturnedPromise = null;
     document.startViewTransition = (update) => {
       window.__dsThemeTransitionCalls++;
-      const updated = Promise.resolve().then(() => {
-        const updateResult = update();
-        window.__dsThemeUpdateReturnedPromise = !!updateResult && typeof updateResult.then === 'function';
-        return updateResult;
-      });
+      const updated = Promise.resolve().then(update);
       return { ready: updated, finished: updated };
-    };
-    document.documentElement.animate = (frames, options) => {
-      window.__dsThemeAnimation = { frames, options };
-      return { finished: Promise.resolve(), cancel() {} };
     };
   });
   await page.click('#themeBtn');
-  await page.waitForFunction(() => !!window.__dsThemeAnimation, { timeout: 3000 });
-  const contract = await page.evaluate(() => ({
+  await page.waitForFunction(() => document.documentElement.dataset.theme === 'light');
+  const globalFade = await page.evaluate(() => ({
     calls: window.__dsThemeTransitionCalls,
-    updateReturnedPromise: window.__dsThemeUpdateReturnedPromise,
-    animation: window.__dsThemeAnimation,
     theme: document.documentElement.dataset.theme,
+    bodyDuration: getComputedStyle(document.body).transitionDuration,
+    sidebarDuration: getComputedStyle(document.querySelector('.sidebar')).transitionDuration,
   }));
-  const contractFrames = Array.isArray(contract.animation.frames)
-    ? contract.animation.frames.map((frame) => frame.clipPath)
-    : contract.animation.frames.clipPath;
-  const contractStart = contractFrames[0];
-  const contractEnd = contractFrames[contractFrames.length - 1];
-  const contractRadius = Number((contractStart.match(/^circle\(([\d.]+)px/) || [])[1]);
-  const originMatch = contractEnd.match(/at ([\d.]+)px ([\d.]+)px/);
-  const originOK = originMatch &&
-    Math.abs(Number(originMatch[1]) - (themeBox.x + themeBox.width / 2)) < 2 &&
-    Math.abs(Number(originMatch[2]) - (themeBox.y + themeBox.height / 2)) < 2;
-  check('深色向按钮收拢', contract.calls === 1 && contract.theme === 'light' && originOK &&
-    contract.updateReturnedPromise === false &&
-    contract.animation.options.pseudoElement === '::view-transition-old(root)' &&
-    contract.animation.options.duration === 650 && contract.animation.options.fill === 'forwards' &&
-    contractRadius > requiredThemeRadius &&
-    contractEnd.startsWith('circle(0px'), JSON.stringify(contract.animation));
+  const hasDuration = (value) => value.split(',').some((part) => parseFloat(part) > 0);
+  check('主题使用全局渐变', globalFade.calls === 0 && globalFade.theme === 'light' &&
+    hasDuration(globalFade.bodyDuration) && hasDuration(globalFade.sidebarDuration), JSON.stringify(globalFade));
 
-  await page.evaluate(() => { window.__dsThemeAnimation = null; });
   await page.click('#themeBtn');
-  await page.waitForFunction(() => !!window.__dsThemeAnimation, { timeout: 3000 });
-  const spread = await page.evaluate(() => ({
+  await page.waitForFunction(() => document.documentElement.dataset.theme === 'dark');
+  const reverseFade = await page.evaluate(() => ({
     calls: window.__dsThemeTransitionCalls,
-    animation: window.__dsThemeAnimation,
     theme: document.documentElement.dataset.theme,
   }));
-  const spreadFrames = Array.isArray(spread.animation.frames)
-    ? spread.animation.frames.map((frame) => frame.clipPath)
-    : spread.animation.frames.clipPath;
-  const spreadRadius = Number((spreadFrames[spreadFrames.length - 1].match(/^circle\(([\d.]+)px/) || [])[1]);
-  check('浅色从按钮向外扩散', spread.calls === 2 && spread.theme === 'dark' &&
-    spread.animation.options.pseudoElement === '::view-transition-new(root)' &&
-    spread.animation.options.duration === 650 && spread.animation.options.fill === 'forwards' &&
-    spreadFrames[0].startsWith('circle(0px') && spreadRadius > requiredThemeRadius,
-    JSON.stringify(spread.animation));
+  check('全局渐变双向生效', reverseFade.calls === 0 && reverseFade.theme === 'dark', JSON.stringify(reverseFade));
 
-  // 系统要求减少动画时直接切换，不启动 View Transition
+  // 系统要求减少动画时，将全局主题过渡降级为瞬时切换
   await page.emulateMediaFeatures([
     { name: 'prefers-reduced-motion', value: 'reduce' },
     { name: 'prefers-color-scheme', value: 'dark' },
@@ -504,28 +463,24 @@ const EDGE = 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe'
   const reduced = await page.evaluate(() => ({
     calls: window.__dsThemeTransitionCalls,
     theme: document.documentElement.dataset.theme,
+    bodyDuration: getComputedStyle(document.body).transitionDuration,
   }));
-  check('减少动画偏好降级', reduced.calls === 2 && reduced.theme === 'light', JSON.stringify(reduced));
+  check('减少动画偏好降级', reduced.calls === 0 && reduced.theme === 'light' &&
+    reduced.bodyDuration.split(',').every((part) => parseFloat(part) === 0), JSON.stringify(reduced));
   await page.emulateMediaFeatures([
     { name: 'prefers-reduced-motion', value: 'no-preference' },
     { name: 'prefers-color-scheme', value: 'dark' },
   ]);
 
-  // 键盘触发没有指针坐标，以按钮中心作为扩散原点
-  await page.evaluate(() => { window.__dsThemeAnimation = null; });
+  // 键盘触发与指针使用同一套全局渐变
   await page.focus('#themeBtn');
   await page.keyboard.press('Enter');
-  await page.waitForFunction(() => !!window.__dsThemeAnimation, { timeout: 3000 });
-  const keyboardClip = await page.evaluate(() => {
-    const frames = window.__dsThemeAnimation.frames;
-    return Array.isArray(frames) ? frames[0].clipPath : frames.clipPath[0];
-  });
-  const keyboardOrigin = keyboardClip.match(/at ([\d.]+)px ([\d.]+)px/);
-  const keyboardOriginOK = keyboardOrigin &&
-    Math.abs(Number(keyboardOrigin[1]) - (themeBox.x + themeBox.width / 2)) < 2 &&
-    Math.abs(Number(keyboardOrigin[2]) - (themeBox.y + themeBox.height / 2)) < 2;
-  const keyboardPseudo = await page.evaluate(() => window.__dsThemeAnimation.options.pseudoElement);
-  check('键盘切换使用按钮中心', keyboardOriginOK && keyboardPseudo === '::view-transition-new(root)', keyboardClip);
+  await page.waitForFunction(() => document.documentElement.dataset.theme === 'dark');
+  const keyboardTheme = await page.evaluate(() => ({
+    calls: window.__dsThemeTransitionCalls,
+    theme: document.documentElement.dataset.theme,
+  }));
+  check('键盘切换使用全局渐变', keyboardTheme.calls === 0 && keyboardTheme.theme === 'dark', JSON.stringify(keyboardTheme));
 
   await reopenThemeMenu();
   await page.click('#menuPop [data-act="settings"]');
