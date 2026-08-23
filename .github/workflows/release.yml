@@ -20,20 +20,20 @@ jobs:
     runs-on: windows-latest
     steps:
       - name: 检出代码
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           fetch-depth: 0 # 拉取全部历史与标签, 用于生成变更日志
 
       - name: 安装 Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v6
         with:
-          go-version: '1.22.x'
+          go-version: '1.25.x' # 与 go.mod 的 go 1.25.0 对齐(避免工具链自动下载)
           cache: true
 
       - name: 安装 Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
-          node-version: '20'
+          node-version: '22'
 
       - name: 版本一致性检查
         shell: pwsh

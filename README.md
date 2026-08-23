@@ -67,7 +67,7 @@ DocShare-Server.exe -dir D:\文档A,D:\文档B -addr 0.0.0.0:8080 -password 1234
 .\build.bat
 ```
 
-需要 Go 1.22+；桌面版运行需要 WebView2 Runtime（Windows 10/11 系统自带）。
+需要 Go 1.25+；桌面版运行需要 WebView2 Runtime（Windows 10/11 系统自带）。
 
 ## 目录结构
 
