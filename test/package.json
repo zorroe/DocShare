@@ -4,6 +4,6 @@
   "version": "1.0.0",
   "description": "DocShare 前端自动化冒烟测试依赖 (puppeteer-core + 本机 Edge)",
   "dependencies": {
-    "puppeteer-core": "^25.8.0"
+    "puppeteer-core": "^25.9.0"
   }
 }
